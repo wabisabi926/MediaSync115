@@ -154,33 +154,37 @@ onMounted(() => {
   }
 
   .payload-panel {
-    padding: 8px 16px;
-    background: var(--ms-glass-bg);
-    border: 1px solid var(--ms-border-color);
-    border-radius: 8px;
+    padding: 12px 16px;
+    background: linear-gradient(160deg, rgba(69, 134, 207, 0.14) 0%, rgba(47, 102, 168, 0.08) 100%);
+    border: 1px solid rgba(122, 176, 235, 0.35);
+    border-radius: 10px;
 
     .payload-row {
       margin-bottom: 8px;
       color: var(--ms-text-secondary);
 
       span:first-child {
-        color: var(--ms-text-muted);
+        color: #7fb4e8;
         margin-right: 8px;
       }
 
       code {
-        color: var(--ms-text-primary);
+        color: #d7ecff;
+        background: rgba(82, 137, 199, 0.2);
+        padding: 2px 6px;
+        border-radius: 6px;
       }
     }
 
     .payload-json {
       margin: 0;
-      padding: 10px;
+      padding: 12px;
       border-radius: 8px;
       max-height: 320px;
       overflow: auto;
-      background: var(--ms-bg-elevated);
-      color: var(--ms-text-primary);
+      background: rgba(8, 27, 52, 0.72);
+      border: 1px solid rgba(122, 176, 235, 0.24);
+      color: #d8ebff;
       font-size: 12px;
       line-height: 1.5;
     }
@@ -188,6 +192,30 @@ onMounted(() => {
     .payload-empty {
       color: var(--ms-text-muted);
       font-size: 12px;
+    }
+  }
+}
+
+[data-theme='light'] .subscription-logs-page {
+  .payload-panel {
+    background: linear-gradient(160deg, rgba(100, 162, 230, 0.14) 0%, rgba(67, 137, 211, 0.08) 100%);
+    border-color: rgba(74, 132, 198, 0.3);
+
+    .payload-row {
+      span:first-child {
+        color: #4c7fb7;
+      }
+
+      code {
+        color: #1d4f84;
+        background: rgba(96, 152, 216, 0.2);
+      }
+    }
+
+    .payload-json {
+      background: rgba(234, 244, 255, 0.86);
+      border-color: rgba(93, 149, 211, 0.25);
+      color: #204d7f;
     }
   }
 }

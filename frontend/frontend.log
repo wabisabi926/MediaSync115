@@ -3,11 +3,14 @@
 > vite --host 0.0.0.0 --port 5173
 
 
-  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m595[22m[2m[0m ms[22m
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m676[22m[2m[0m ms[22m
 
   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://10.222.222.1:[1m5173[22m/[39m
   [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.2.153:[1m5173[22m/[39m
   [32m➜[39m  [1mNetwork[22m: [36mhttp://172.16.0.1:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.18.240.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
 DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
 
 More info: https://sass-lang.com/d/legacy-js-api
@@ -28,112 +31,3 @@ DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be
 
 More info: https://sass-lang.com/d/legacy-js-api
 
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:30:38[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Downloads.vue, /src/views/Downloads.vue?vue&type=style&index=0&scoped=834b00f8&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:30:49[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue[22m
-[2m12:36:36[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue[22m
-[2m12:36:55[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Downloads.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:48:07[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue[22m
-[2m12:48:42[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Downloads.vue, /src/views/Downloads.vue?vue&type=style&index=0&scoped=834b00f8&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:49:13[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue, /src/views/Settings.vue?vue&type=style&index=0&scoped=817427b0&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:49:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/MovieDetail.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:49:39[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/TvDetail.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:50:30[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m12:55:24[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Downloads.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:02:30[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/Search.vue?vue&type=style&index=0&scoped=d2b94ce3&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:11:44[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/Search.vue?vue&type=style&index=0&scoped=d2b94ce3&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:14:08[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/Search.vue?vue&type=style&index=0&scoped=d2b94ce3&lang.scss[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:17:32[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:40:53[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue, /src/views/ExploreSection.vue[22m
-[2m13:41:15[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-[2m13:41:26[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-[2m13:41:36[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-[2m13:41:51[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-[2m13:42:00[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Settings.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:48:35[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue, /src/views/ExploreSection.vue[22m
-[2m13:48:44[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Subscriptions.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:48:54[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Subscriptions.vue[22m
-DEPRECATION WARNING [legacy-js-api]: The legacy JS API is deprecated and will be removed in Dart Sass 2.0.0.
-
-More info: https://sass-lang.com/d/legacy-js-api
-
-[2m13:57:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/views/Search.vue, /src/views/MovieDetail.vue, /src/views/Scheduler.vue, /src/views/Subscriptions.vue, /src/views/Downloads.vue, /src/views/Settings.vue, /src/views/Workflow.vue, /src/views/TvDetail.vue, /src/views/ExploreSection.vue[22m

@@ -2,129 +2,359 @@
   <div class="settings-page">
     <h2>系统设置</h2>
 
-    <el-card class="settings-card">
-      <template #header>
-        <div class="card-header">
-          <span>115网盘配置</span>
-          <div class="status-tags">
-            <el-tag v-if="cookieStatus.valid" type="success" size="small">已连接</el-tag>
-            <el-tag v-else-if="cookieStatus.checked" type="danger" size="small">未连接</el-tag>
-            <el-tag v-if="riskHealth.checked" :type="riskHealthTagType" size="small">{{ riskHealthTagText }}</el-tag>
-          </div>
-        </div>
-      </template>
+    <el-tabs v-model="activeSettingsTab" class="settings-tabs">
+      <el-tab-pane label="115网盘" name="pan115">
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>115网盘配置</span>
+              <div class="status-tags">
+                <el-tag v-if="cookieStatus.valid" type="success" size="small">已连接</el-tag>
+                <el-tag v-else-if="cookieStatus.checked" type="danger" size="small">未连接</el-tag>
+                <el-tag v-if="riskHealth.checked" :type="riskHealthTagType" size="small">{{ riskHealthTagText }}</el-tag>
+              </div>
+            </div>
+          </template>
 
-      <el-form :model="settingsForm" label-width="120px">
-        <el-form-item label="Cookie状态">
-          <div class="cookie-status">
-            <span v-if="cookieInfo.configured">{{ cookieInfo.masked_cookie }}</span>
-            <span v-else class="not-configured">未配置</span>
-          </div>
-        </el-form-item>
-        <el-form-item label="更新Cookie">
-          <el-input
-            v-model="settingsForm.cookie"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入115网盘Cookie（格式：UID=xxx; CID=xxx; SEID=xxx）"
-          />
-          <div class="cookie-tips">
-            <el-text size="small" type="info">
-              获取方法：登录115网盘网页版 → 按F12打开开发者工具 → Network → 刷新页面 → 点击任意请求 → Headers → 找到Cookie字段
-            </el-text>
-          </div>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSaveCookie" :loading="saving">保存Cookie</el-button>
-          <el-button @click="handleTestConnection" :loading="testing">测试连接</el-button>
-          <el-button @click="handleTestRiskHealth" :loading="testingRiskHealth">检测风控</el-button>
-        </el-form-item>
-      </el-form>
-
-      <el-alert
-        v-if="riskHealth.checked"
-        :title="riskHealth.summary || '115状态检测完成'"
-        :type="riskHealthAlertType"
-        :closable="false"
-        show-icon
-        style="margin-top: 8px"
-      />
-
-      <div v-if="cookieStatus.valid && cookieStatus.user_info" class="user-info">
-        <el-divider />
-        <h4>用户信息</h4>
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="用户名">{{ cookieStatus.user_info.user_name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="用户ID">{{ cookieStatus.user_info.user_id || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="会员状态">
-            <el-tag v-if="cookieStatus.user_info.is_vip && cookieStatus.user_info.is_vip > 0" type="warning" size="small">
-              VIP{{ cookieStatus.user_info.is_vip > 1 ? cookieStatus.user_info.is_vip : '' }}
-            </el-tag>
-            <el-tag v-else type="info" size="small">普通用户</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="已用空间">{{ formatSize(cookieStatus.user_info.space_used) }}</el-descriptions-item>
-          <el-descriptions-item label="总空间">{{ formatSize(cookieStatus.user_info.space_total) }}</el-descriptions-item>
-        </el-descriptions>
-      </div>
-
-      <!-- 默认转存文件夹设置 -->
-      <div v-if="cookieStatus.valid" class="default-folder-section">
-        <el-divider />
-        <h4>转存设置</h4>
-        <el-form :model="defaultFolderForm" label-width="120px">
-          <el-form-item label="默认保存位置">
-            <div class="folder-selector">
-              <el-tree-select
-                v-model="defaultFolderForm.folderId"
-                :data="folderTree"
-                :props="folderTreeProps"
-                placeholder="选择默认转存目录"
-                check-strictly
-                lazy
-                :load="loadFolderChildren"
-                :render-after-expand="false"
-                clearable
-                @change="handleDefaultFolderChange"
-                style="width: 100%"
+          <el-form :model="settingsForm" label-width="120px">
+            <el-form-item label="Cookie状态">
+              <div class="cookie-status">
+                <span v-if="cookieInfo.configured">{{ cookieInfo.masked_cookie }}</span>
+                <span v-else class="not-configured">未配置</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="更新Cookie">
+              <el-input
+                v-model="settingsForm.cookie"
+                type="textarea"
+                :rows="3"
+                placeholder="请输入115网盘Cookie（格式：UID=xxx; CID=xxx; SEID=xxx）"
               />
-              <el-button type="primary" @click="handleSaveDefaultFolder" :loading="savingFolder" style="margin-left: 10px">
-                保存设置
-              </el-button>
-            </div>
-            <div class="current-folder">
-              <el-text size="small">当前默认转存位置：{{ currentDefaultFolderText }}</el-text>
-            </div>
-            <div class="folder-tips">
-              <el-text size="small" type="info">
-                设置后，转存资源时将默认保存到此目录
-              </el-text>
-            </div>
-          </el-form-item>
-        </el-form>
-      </div>
+              <div class="cookie-tips">
+                <el-text size="small" type="info">
+                  获取方法：登录115网盘网页版 → 按F12打开开发者工具 → Network → 刷新页面 → 点击任意请求 → Headers → 找到Cookie字段
+                </el-text>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="handleSaveCookie" :loading="saving">保存Cookie</el-button>
+              <el-button @click="handleTestConnection" :loading="testing">测试连接</el-button>
+              <el-button @click="handleTestRiskHealth" :loading="testingRiskHealth">检测风控</el-button>
+            </el-form-item>
+          </el-form>
 
-      <div v-if="cookieStatus.valid" class="offline-folder-section">
-        <el-divider />
-        <h4>离线下载设置</h4>
-        <el-form label-width="120px">
-          <el-form-item label="默认离线目录">
-            <div class="current-folder">
-              <el-text>{{ currentOfflineDefaultFolderText }}</el-text>
+          <div
+            v-if="connectionResult.checked"
+            class="connection-result"
+            :class="connectionResult.success ? 'is-success' : 'is-failed'"
+          >
+            <div class="result-title">连接检测结果</div>
+            <div class="result-message">{{ connectionResult.message }}</div>
+          </div>
+
+          <el-alert
+            v-if="riskHealth.checked"
+            :title="riskHealth.summary || '115状态检测完成'"
+            :type="riskHealthAlertType"
+            :closable="false"
+            show-icon
+            style="margin-top: 12px"
+          />
+
+          <div v-if="cookieStatus.valid && cookieStatus.user_info" class="user-info">
+            <el-divider />
+            <h4>用户信息</h4>
+            <el-descriptions :column="2" border size="small">
+              <el-descriptions-item label="用户名">{{ cookieStatus.user_info.user_name || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="用户ID">{{ cookieStatus.user_info.user_id || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="会员状态">
+                <el-tag v-if="cookieStatus.user_info.is_vip && cookieStatus.user_info.is_vip > 0" type="warning" size="small">
+                  VIP{{ cookieStatus.user_info.is_vip > 1 ? cookieStatus.user_info.is_vip : '' }}
+                </el-tag>
+                <el-tag v-else type="info" size="small">普通用户</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="已用空间">{{ formatSize(cookieStatus.user_info.space_used) }}</el-descriptions-item>
+              <el-descriptions-item label="总空间">{{ formatSize(cookieStatus.user_info.space_total) }}</el-descriptions-item>
+            </el-descriptions>
+          </div>
+
+          <div v-if="cookieStatus.valid" class="default-folder-section">
+            <el-divider />
+            <h4>转存设置</h4>
+            <el-form :model="defaultFolderForm" label-width="120px">
+              <el-form-item label="默认保存位置">
+                <div class="folder-selector">
+                  <el-tree-select
+                    v-model="defaultFolderForm.folderId"
+                    class="default-folder-select"
+                    :data="folderTree"
+                    :props="folderTreeProps"
+                    placeholder="选择默认转存目录"
+                    check-strictly
+                    lazy
+                    :load="loadFolderChildren"
+                    :render-after-expand="false"
+                    clearable
+                    @change="handleDefaultFolderChange"
+                  />
+                  <el-button type="primary" @click="handleSaveDefaultFolder" :loading="savingFolder">
+                    保存设置
+                  </el-button>
+                </div>
+                <div class="current-folder">
+                  <el-text size="small">当前默认转存位置：{{ currentDefaultFolderText }}</el-text>
+                </div>
+                <div class="folder-tips">
+                  <el-text size="small" type="info">
+                    设置后，转存资源时将默认保存到此目录
+                  </el-text>
+                </div>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <div v-if="cookieStatus.valid" class="offline-folder-section">
+            <el-divider />
+            <h4>离线下载设置</h4>
+            <el-form label-width="120px">
+              <el-form-item label="默认离线目录">
+                <div class="current-folder">
+                  <el-text>{{ currentOfflineDefaultFolderText }}</el-text>
+                </div>
+                <div class="folder-action">
+                  <el-button type="primary" @click="handleOpenOfflineFolderDialog">
+                    修改默认设置
+                  </el-button>
+                </div>
+                <div class="folder-tips">
+                  <el-text size="small" type="info">
+                    添加离线任务时会默认使用此目录
+                  </el-text>
+                </div>
+              </el-form-item>
+            </el-form>
+          </div>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="Nullbr" name="nullbr">
+        <el-card class="settings-card">
+          <template #header>
+            <span>Nullbr API 配置</span>
+          </template>
+
+          <el-form :model="nullbrForm" label-width="120px">
+            <el-form-item label="APP ID">
+              <el-input v-model="nullbrForm.appId" placeholder="Nullbr APP ID" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="nullbrForm.apiKey" placeholder="Nullbr API Key" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="Base URL">
+              <el-input v-model="nullbrForm.baseUrl" placeholder="例如: https://api.nullbr.eu.org/" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingNullbr" @click="handleSaveNullbr">保存</el-button>
+              <el-button :loading="testingNullbr" @click="handleTestNullbr">测试凭证</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="TMDB" name="tmdb">
+        <el-card class="settings-card">
+          <template #header>
+            <span>TMDB 配置</span>
+          </template>
+
+          <el-form :model="tmdbForm" label-width="120px">
+            <el-form-item label="API Key">
+              <el-input v-model="tmdbForm.apiKey" placeholder="TMDB API Key" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="语言">
+              <el-input v-model="tmdbForm.language" placeholder="例如: zh-CN" />
+            </el-form-item>
+            <el-form-item label="地区">
+              <el-input v-model="tmdbForm.region" placeholder="例如: CN" />
+            </el-form-item>
+            <el-form-item label="API 地址">
+              <el-input v-model="tmdbForm.baseUrl" placeholder="例如: https://api.themoviedb.org/3" />
+            </el-form-item>
+            <el-form-item label="图片地址">
+              <el-input v-model="tmdbForm.imageBaseUrl" placeholder="例如: https://image.tmdb.org/t/p/w500" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingTmdb" @click="handleSaveTmdb">保存</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="Pansou" name="pansou">
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>Pansou 接口配置</span>
+              <el-tag
+                v-if="pansouHealthStatus === 'healthy'"
+                type="success"
+                size="small"
+              >
+                可用
+              </el-tag>
+              <el-tag
+                v-else-if="pansouHealthStatus === 'error' || pansouHealthStatus === 'unhealthy'"
+                type="danger"
+                size="small"
+              >
+                不可用
+              </el-tag>
             </div>
-            <div class="folder-action">
-              <el-button type="primary" @click="handleOpenOfflineFolderDialog">
-                修改默认设置
-              </el-button>
-            </div>
-            <div class="folder-tips">
+          </template>
+
+          <el-form :model="pansouForm" label-width="120px">
+            <el-form-item label="服务地址">
+              <el-input
+                v-model="pansouForm.baseUrl"
+                placeholder="例如: http://127.0.0.1:8088/"
+              />
               <el-text size="small" type="info">
-                添加离线任务时会默认使用此目录
+                修改后会立即应用到后端 Pansou 搜索服务
               </el-text>
+            </el-form-item>
+            <el-form-item>
+              <el-button
+                type="primary"
+                :loading="savingPansou"
+                @click="handleSavePansouConfig"
+              >
+                保存
+              </el-button>
+              <el-button
+                :loading="testingPansou"
+                @click="handleTestPansou"
+              >
+                测试连接
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="订阅任务" name="scheduler">
+        <el-card class="settings-card">
+          <template #header>
+            <span>订阅定时任务配置</span>
+          </template>
+
+          <el-form :model="schedulerForm" label-width="120px">
+            <el-divider content-position="left">Nullbr 渠道</el-divider>
+            <el-form-item label="启用任务">
+              <el-switch v-model="schedulerForm.nullbr.enabled" />
+            </el-form-item>
+            <el-form-item label="检查间隔(小时)">
+              <el-input-number
+                v-model="schedulerForm.nullbr.intervalHours"
+                :min="1"
+                :max="24"
+                :disabled="!schedulerForm.nullbr.enabled"
+              />
+            </el-form-item>
+            <el-form-item label="执行时间">
+              <el-time-picker
+                v-model="schedulerForm.nullbr.runTime"
+                format="HH:mm"
+                value-format="HH:mm"
+                placeholder="选择时间"
+                :disabled="!schedulerForm.nullbr.enabled"
+              />
+            </el-form-item>
+
+            <el-divider content-position="left">Pansou 渠道</el-divider>
+            <el-form-item label="启用任务">
+              <el-switch v-model="schedulerForm.pansou.enabled" />
+            </el-form-item>
+            <el-form-item label="检查间隔(小时)">
+              <el-input-number
+                v-model="schedulerForm.pansou.intervalHours"
+                :min="1"
+                :max="24"
+                :disabled="!schedulerForm.pansou.enabled"
+              />
+            </el-form-item>
+            <el-form-item label="执行时间">
+              <el-time-picker
+                v-model="schedulerForm.pansou.runTime"
+                format="HH:mm"
+                value-format="HH:mm"
+                placeholder="选择时间"
+                :disabled="!schedulerForm.pansou.enabled"
+              />
+            </el-form-item>
+
+            <el-form-item>
+              <el-button type="primary" :loading="savingScheduler" @click="handleSaveScheduler">保存</el-button>
+              <el-button :loading="runningNullbr" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('nullbr')">立即执行 Nullbr</el-button>
+              <el-button :loading="runningPansou" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('pansou')">立即执行 Pansou</el-button>
+            </el-form-item>
+            <el-form-item v-if="runningSubscriptionChannel">
+              <el-alert
+                :title="runningTaskMessage || `正在执行 ${runningSubscriptionChannel} 任务`"
+                type="info"
+                :closable="false"
+                show-icon
+              />
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="执行日志" name="taskLogs">
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>订阅执行日志</span>
+              <el-button text type="primary" :loading="loadingSubscriptionLogs" @click="fetchSubscriptionLogs">刷新</el-button>
             </div>
-          </el-form-item>
-        </el-form>
-      </div>
-    </el-card>
+          </template>
+
+          <el-table :data="subscriptionLogs" size="small" v-loading="loadingSubscriptionLogs">
+            <el-table-column prop="started_at" label="开始时间" min-width="170" :formatter="formatBeijingTableCell" />
+            <el-table-column prop="channel" label="渠道" width="100" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'success' ? 'success' : row.status === 'partial' ? 'warning' : 'danger'" size="small">
+                  {{ row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="checked_count" label="检查订阅" width="100" />
+            <el-table-column prop="new_resource_count" label="新增资源" width="100" />
+            <el-table-column prop="failed_count" label="失败数" width="90" />
+            <el-table-column label="失败分组" min-width="240">
+              <template #default="{ row }">
+                <span>{{ formatFailureGroups(row.failure_groups) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="message" label="摘要" min-width="260" />
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="关于" name="about">
+        <el-card class="settings-card">
+          <template #header>
+            <span>关于</span>
+          </template>
+
+          <div class="about-info">
+            <p><strong>MediaSync115</strong></p>
+            <p>版本: 1.0.0</p>
+            <p>影视自动化网盘系统</p>
+          </div>
+        </el-card>
+      </el-tab-pane>
+    </el-tabs>
 
     <el-dialog
       v-model="offlineFolderDialogVisible"
@@ -156,212 +386,6 @@
         </el-button>
       </template>
     </el-dialog>
-
-    <el-card class="settings-card">
-      <template #header>
-        <span>Nullbr API 配置</span>
-      </template>
-
-      <el-form :model="nullbrForm" label-width="120px">
-        <el-form-item label="APP ID">
-          <el-input v-model="nullbrForm.appId" placeholder="Nullbr APP ID" />
-        </el-form-item>
-        <el-form-item label="API Key">
-          <el-input v-model="nullbrForm.apiKey" placeholder="Nullbr API Key" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="Base URL">
-          <el-input v-model="nullbrForm.baseUrl" placeholder="例如: https://api.nullbr.eu.org/" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="savingNullbr" @click="handleSaveNullbr">保存</el-button>
-          <el-button :loading="testingNullbr" @click="handleTestNullbr">测试凭证</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card class="settings-card">
-      <template #header>
-        <span>TMDB 配置</span>
-      </template>
-
-      <el-form :model="tmdbForm" label-width="120px">
-        <el-form-item label="API Key">
-          <el-input v-model="tmdbForm.apiKey" placeholder="TMDB API Key" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="语言">
-          <el-input v-model="tmdbForm.language" placeholder="例如: zh-CN" />
-        </el-form-item>
-        <el-form-item label="地区">
-          <el-input v-model="tmdbForm.region" placeholder="例如: CN" />
-        </el-form-item>
-        <el-form-item label="API 地址">
-          <el-input v-model="tmdbForm.baseUrl" placeholder="例如: https://api.themoviedb.org/3" />
-        </el-form-item>
-        <el-form-item label="图片地址">
-          <el-input v-model="tmdbForm.imageBaseUrl" placeholder="例如: https://image.tmdb.org/t/p/w500" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="savingTmdb" @click="handleSaveTmdb">保存</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card class="settings-card">
-      <template #header>
-        <div class="card-header">
-          <span>Pansou 接口配置</span>
-          <el-tag
-            v-if="pansouHealthStatus === 'healthy'"
-            type="success"
-            size="small"
-          >
-            可用
-          </el-tag>
-          <el-tag
-            v-else-if="pansouHealthStatus === 'error' || pansouHealthStatus === 'unhealthy'"
-            type="danger"
-            size="small"
-          >
-            不可用
-          </el-tag>
-        </div>
-      </template>
-
-      <el-form :model="pansouForm" label-width="120px">
-        <el-form-item label="服务地址">
-          <el-input
-            v-model="pansouForm.baseUrl"
-            placeholder="例如: http://127.0.0.1:8088/"
-          />
-          <el-text size="small" type="info">
-            修改后会立即应用到后端 Pansou 搜索服务
-          </el-text>
-        </el-form-item>
-        <el-form-item>
-          <el-button
-            type="primary"
-            :loading="savingPansou"
-            @click="handleSavePansouConfig"
-          >
-            保存
-          </el-button>
-          <el-button
-            :loading="testingPansou"
-            @click="handleTestPansou"
-          >
-            测试连接
-          </el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card class="settings-card">
-      <template #header>
-        <span>订阅定时任务配置</span>
-      </template>
-
-      <el-form :model="schedulerForm" label-width="120px">
-        <el-divider content-position="left">Nullbr 渠道</el-divider>
-        <el-form-item label="启用任务">
-          <el-switch v-model="schedulerForm.nullbr.enabled" />
-        </el-form-item>
-        <el-form-item label="检查间隔(小时)">
-          <el-input-number
-            v-model="schedulerForm.nullbr.intervalHours"
-            :min="1"
-            :max="24"
-            :disabled="!schedulerForm.nullbr.enabled"
-          />
-        </el-form-item>
-        <el-form-item label="执行时间">
-          <el-time-picker
-            v-model="schedulerForm.nullbr.runTime"
-            format="HH:mm"
-            value-format="HH:mm"
-            placeholder="选择时间"
-            :disabled="!schedulerForm.nullbr.enabled"
-          />
-        </el-form-item>
-
-        <el-divider content-position="left">Pansou 渠道</el-divider>
-        <el-form-item label="启用任务">
-          <el-switch v-model="schedulerForm.pansou.enabled" />
-        </el-form-item>
-        <el-form-item label="检查间隔(小时)">
-          <el-input-number
-            v-model="schedulerForm.pansou.intervalHours"
-            :min="1"
-            :max="24"
-            :disabled="!schedulerForm.pansou.enabled"
-          />
-        </el-form-item>
-        <el-form-item label="执行时间">
-          <el-time-picker
-            v-model="schedulerForm.pansou.runTime"
-            format="HH:mm"
-            value-format="HH:mm"
-            placeholder="选择时间"
-            :disabled="!schedulerForm.pansou.enabled"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button type="primary" :loading="savingScheduler" @click="handleSaveScheduler">保存</el-button>
-          <el-button :loading="runningNullbr" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('nullbr')">立即执行 Nullbr</el-button>
-          <el-button :loading="runningPansou" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('pansou')">立即执行 Pansou</el-button>
-        </el-form-item>
-        <el-form-item v-if="runningSubscriptionChannel">
-          <el-alert
-            :title="runningTaskMessage || `正在执行 ${runningSubscriptionChannel} 任务`"
-            type="info"
-            :closable="false"
-            show-icon
-          />
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card class="settings-card">
-      <template #header>
-        <div class="card-header">
-          <span>订阅执行日志</span>
-          <el-button text type="primary" :loading="loadingSubscriptionLogs" @click="fetchSubscriptionLogs">刷新</el-button>
-        </div>
-      </template>
-
-      <el-table :data="subscriptionLogs" size="small" v-loading="loadingSubscriptionLogs">
-        <el-table-column prop="started_at" label="开始时间" min-width="170" :formatter="formatBeijingTableCell" />
-        <el-table-column prop="channel" label="渠道" width="100" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'success' ? 'success' : row.status === 'partial' ? 'warning' : 'danger'" size="small">
-              {{ row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="checked_count" label="检查订阅" width="100" />
-        <el-table-column prop="new_resource_count" label="新增资源" width="100" />
-        <el-table-column prop="failed_count" label="失败数" width="90" />
-        <el-table-column label="失败分组" min-width="240">
-          <template #default="{ row }">
-            <span>{{ formatFailureGroups(row.failure_groups) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="message" label="摘要" min-width="260" />
-      </el-table>
-    </el-card>
-
-    <el-card class="settings-card">
-      <template #header>
-        <span>关于</span>
-      </template>
-
-      <div class="about-info">
-        <p><strong>MediaSync115</strong></p>
-        <p>版本: 1.0.0</p>
-        <p>影视自动化网盘系统</p>
-      </div>
-    </el-card>
   </div>
 </template>
 
@@ -374,6 +398,8 @@ import { formatBeijingTableCell } from '@/utils/timezone'
 const settingsForm = ref({
   cookie: ''
 })
+
+const activeSettingsTab = ref('pan115')
 
 const nullbrForm = ref({
   appId: '',
@@ -433,6 +459,12 @@ const cookieStatus = reactive({
   valid: false,
   checked: false,
   user_info: null
+})
+
+const connectionResult = reactive({
+  checked: false,
+  success: false,
+  message: ''
 })
 
 const riskHealth = reactive({
@@ -526,10 +558,18 @@ const checkCookie = async () => {
     cookieStatus.valid = data.valid
     cookieStatus.checked = true
     cookieStatus.user_info = data.user_info
+    connectionResult.checked = true
+    connectionResult.success = !!data.valid
+    connectionResult.message = data.valid
+      ? `连接正常：${data.user_info?.user_name || '用户信息已获取'}`
+      : `连接异常：${data.message || '请检查Cookie配置'}`
   } catch (error) {
     cookieStatus.valid = false
     cookieStatus.checked = true
     cookieStatus.user_info = null
+    connectionResult.checked = true
+    connectionResult.success = false
+    connectionResult.message = error.response?.data?.detail || '连接检测失败，请检查Cookie配置'
   }
 }
 
@@ -593,15 +633,26 @@ const handleTestConnection = async () => {
       cookieStatus.valid = true
       cookieStatus.checked = true
       cookieStatus.user_info = data.user_info
+      connectionResult.checked = true
+      connectionResult.success = true
+      connectionResult.message = `连接成功：${data.user_info?.user_name || '用户信息已获取'}`
       ElMessage.success(`连接成功: ${data.user_info?.user_name || '用户'}`)
     } else {
       cookieStatus.valid = false
       cookieStatus.checked = true
+      cookieStatus.user_info = null
+      connectionResult.checked = true
+      connectionResult.success = false
+      connectionResult.message = `连接失败：${data.message || '请检查Cookie'}`
       ElMessage.error('连接失败: ' + (data.message || '请检查Cookie'))
     }
   } catch (error) {
     cookieStatus.valid = false
     cookieStatus.checked = true
+    cookieStatus.user_info = null
+    connectionResult.checked = true
+    connectionResult.success = false
+    connectionResult.message = '连接失败，请检查Cookie配置'
     ElMessage.error('连接失败，请检查Cookie配置')
   } finally {
     testing.value = false
@@ -990,6 +1041,12 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .settings-page {
+  .settings-tabs {
+    :deep(.el-tabs__content) {
+      padding-top: 14px;
+    }
+  }
+
   h2 {
     margin: 0 0 24px;
     color: var(--ms-text-primary);
@@ -1024,6 +1081,54 @@ onMounted(() => {
         margin: 0 0 12px;
         color: var(--ms-text-primary);
       }
+
+      :deep(.el-descriptions__body) {
+        background: transparent;
+      }
+
+      :deep(.el-descriptions__label.el-descriptions__cell) {
+        background: rgba(79, 145, 226, 0.16);
+      }
+
+      :deep(.el-descriptions__content.el-descriptions__cell) {
+        background: rgba(61, 119, 188, 0.1);
+      }
+    }
+
+    .connection-result {
+      margin-top: 4px;
+      border-radius: 10px;
+      padding: 10px 14px;
+      border: 1px solid transparent;
+
+      .result-title {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .result-message {
+        color: var(--ms-text-primary);
+        line-height: 1.4;
+      }
+
+      &.is-success {
+        background: rgba(43, 175, 117, 0.15);
+        border-color: rgba(52, 190, 129, 0.36);
+
+        .result-title {
+          color: var(--ms-accent-success);
+        }
+      }
+
+      &.is-failed {
+        background: rgba(230, 100, 120, 0.14);
+        border-color: rgba(236, 116, 136, 0.3);
+
+        .result-title {
+          color: var(--ms-accent-danger);
+        }
+      }
     }
 
     .default-folder-section {
@@ -1035,6 +1140,12 @@ onMounted(() => {
       .folder-selector {
         display: flex;
         align-items: center;
+        gap: 10px;
+
+        .default-folder-select {
+          flex: 1 1 520px;
+          min-width: 460px;
+        }
       }
 
       .folder-tips {
@@ -1072,6 +1183,23 @@ onMounted(() => {
       strong {
         color: var(--ms-text-primary);
         font-size: 16px;
+      }
+    }
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-page {
+    .settings-card {
+      .default-folder-section {
+        .folder-selector {
+          flex-direction: column;
+          align-items: stretch;
+
+          .default-folder-select {
+            min-width: 100%;
+          }
+        }
       }
     }
   }
