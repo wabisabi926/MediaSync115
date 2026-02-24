@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import difflib
 import hashlib
 import hmac
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -10,6 +12,7 @@ from urllib.parse import quote
 import httpx
 
 from app.services.nullbr_service import nullbr_service
+from app.services.tmdb_service import tmdb_service
 
 
 DOUBAN_FRODO_BASE_URL = "https://frodo.douban.com/api/v2"
@@ -17,6 +20,7 @@ DOUBAN_API_KEY = "0dad551ec0f84ed02907ff5c42e8ec70"
 DOUBAN_API_SECRET = "bf7dddc7c9cfe6f7"
 DOUBAN_CACHE_TTL_SECONDS = 60 * 60 * 6
 TMDB_ID_CACHE_TTL_SECONDS = 60 * 60 * 24
+TMDB_ID_NEGATIVE_CACHE_TTL_SECONDS = 60 * 10
 TMDB_BACKFILL_CONCURRENCY = 3
 TMDB_BACKFILL_MAX_ITEMS_PER_SECTION = 12
 DOUBAN_SECTION_MAX_COUNT = 50
@@ -89,6 +93,7 @@ DOUBAN_SECTION_SOURCES = [
 
 _douban_sections_cache: dict[str, dict[str, Any]] = {}
 _tmdb_id_cache: dict[str, dict[str, Any]] = {}
+_douban_subject_tmdb_cache: dict[str, dict[str, Any]] = {}
 _tmdb_backfill_inflight: set[str] = set()
 
 _douban_user_agents = [
@@ -193,6 +198,10 @@ def _build_tmdb_cache_key(title: str, year: Optional[str], media_type: str) -> s
     return f"{media_type}|{title.strip().lower()}|{year or ''}"
 
 
+def _build_subject_tmdb_cache_key(douban_id: str, media_type: str) -> str:
+    return f"{media_type}|{str(douban_id or '').strip()}"
+
+
 def _build_section_cache_key(section_key: str, start: int, count: int) -> str:
     return f"{section_key}:{start}:{count}"
 
@@ -210,10 +219,36 @@ def _get_cached_tmdb_id(cache_key: str) -> tuple[bool, Optional[int]]:
     return True, cache_item.get("tmdb_id")
 
 
-def _set_tmdb_id_cache(cache_key: str, tmdb_id: Optional[int]) -> None:
+def _set_tmdb_id_cache(cache_key: str, tmdb_id: Optional[int], ttl_seconds: Optional[int] = None) -> None:
+    effective_ttl = ttl_seconds
+    if effective_ttl is None:
+        effective_ttl = TMDB_ID_CACHE_TTL_SECONDS if tmdb_id else TMDB_ID_NEGATIVE_CACHE_TTL_SECONDS
     _tmdb_id_cache[cache_key] = {
         "tmdb_id": tmdb_id,
-        "expires_at": time.time() + TMDB_ID_CACHE_TTL_SECONDS,
+        "expires_at": time.time() + effective_ttl,
+    }
+
+
+def _get_cached_subject_tmdb_id(cache_key: str) -> tuple[bool, Optional[int]]:
+    cache_item = _douban_subject_tmdb_cache.get(cache_key)
+    if not cache_item:
+        return False, None
+
+    expires_at = cache_item.get("expires_at", 0.0)
+    if time.time() >= expires_at:
+        _douban_subject_tmdb_cache.pop(cache_key, None)
+        return False, None
+
+    return True, cache_item.get("tmdb_id")
+
+
+def _set_subject_tmdb_cache(cache_key: str, tmdb_id: Optional[int], ttl_seconds: Optional[int] = None) -> None:
+    effective_ttl = ttl_seconds
+    if effective_ttl is None:
+        effective_ttl = TMDB_ID_CACHE_TTL_SECONDS if tmdb_id else TMDB_ID_NEGATIVE_CACHE_TTL_SECONDS
+    _douban_subject_tmdb_cache[cache_key] = {
+        "tmdb_id": tmdb_id,
+        "expires_at": time.time() + effective_ttl,
     }
 
 
@@ -237,6 +272,121 @@ def _extract_result_tmdb_id(candidate: dict[str, Any]) -> Optional[int]:
         return None
 
 
+def _normalize_compare_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"[\s\-_:：·•.,，。!！?？'\"“”‘’()（）\[\]【】]", "", text)
+    return text
+
+
+def _extract_candidate_title(candidate: dict[str, Any]) -> str:
+    raw_title = candidate.get("title") or candidate.get("name")
+    if isinstance(raw_title, str) and raw_title.strip():
+        return raw_title.strip()
+    return ""
+
+
+def _title_similarity(source_title: str, candidate_title: str) -> float:
+    left = _normalize_compare_text(source_title)
+    right = _normalize_compare_text(candidate_title)
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+    return difflib.SequenceMatcher(None, left, right).ratio()
+
+
+def _score_candidate(
+    candidate: dict[str, Any],
+    title: str,
+    media_type: str,
+    year: Optional[str],
+) -> tuple[float, dict[str, Any]]:
+    tmdb_id = _extract_result_tmdb_id(candidate)
+    candidate_type = str(candidate.get("media_type") or "").strip().lower()
+    candidate_title = _extract_candidate_title(candidate)
+    candidate_year = _extract_result_year(candidate)
+    similarity = _title_similarity(title, candidate_title)
+
+    meta = {
+        "tmdb_id": tmdb_id,
+        "media_type": candidate_type,
+        "title": candidate_title,
+        "year": candidate_year,
+        "title_similarity": round(similarity, 4),
+    }
+
+    if not tmdb_id:
+        meta["accepted"] = False
+        meta["reject_reason"] = "missing_tmdb_id"
+        return 0.0, meta
+
+    if media_type in {"movie", "tv"} and candidate_type != media_type:
+        meta["accepted"] = False
+        meta["reject_reason"] = "media_type_mismatch"
+        return 0.0, meta
+
+    if similarity < 0.88:
+        meta["accepted"] = False
+        meta["reject_reason"] = "low_title_similarity"
+        return 0.0, meta
+
+    year_bonus = 0.0
+    if year and candidate_year:
+        try:
+            delta = abs(int(year) - int(candidate_year))
+        except Exception:
+            delta = 99
+        if delta > 1:
+            meta["accepted"] = False
+            meta["reject_reason"] = "year_mismatch"
+            return 0.0, meta
+        if delta == 0:
+            year_bonus = 0.2
+        elif delta == 1:
+            year_bonus = 0.1
+
+    score = min(1.0, similarity * 0.8 + year_bonus)
+    meta["accepted"] = True
+    meta["score"] = round(score, 4)
+    return score, meta
+
+
+def _pick_best_tmdb_match(
+    title: str,
+    media_type: str,
+    year: Optional[str],
+    items: list[dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    scored: list[dict[str, Any]] = []
+    for row in items:
+        if not isinstance(row, dict):
+            continue
+        score, meta = _score_candidate(row, title=title, media_type=media_type, year=year)
+        meta["score"] = round(score, 4)
+        scored.append(meta)
+
+    accepted = [item for item in scored if item.get("accepted")]
+    accepted.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    if not accepted:
+        return None, scored[:5]
+
+    best = accepted[0]
+    best_score = float(best.get("score") or 0.0)
+    if best_score < 0.92:
+        return None, scored[:5]
+
+    if len(accepted) > 1:
+        second_score = float(accepted[1].get("score") or 0.0)
+        if best_score - second_score < 0.03:
+            return None, scored[:5]
+
+    return best, scored[:5]
+
+
 def _resolve_tmdb_id_by_nullbr(title: str, media_type: str, year: Optional[str]) -> Optional[int]:
     if not title:
         return None
@@ -251,18 +401,165 @@ def _resolve_tmdb_id_by_nullbr(title: str, media_type: str, year: Optional[str])
         items = []
 
     expected_type = "movie" if media_type == "movie" else "tv"
-    for candidate in items:
-        if not isinstance(candidate, dict):
-            continue
-        if candidate.get("media_type") != expected_type:
-            continue
-        candidate_year = _extract_result_year(candidate)
-        if year and candidate_year and year != candidate_year:
-            continue
-        tmdb_id = _extract_result_tmdb_id(candidate)
-        if tmdb_id:
-            return tmdb_id
-    return None
+    best, _ = _pick_best_tmdb_match(
+        title=title,
+        media_type=expected_type,
+        year=year,
+        items=[row for row in items if isinstance(row, dict)],
+    )
+    if not best:
+        return None
+    tmdb_id = best.get("tmdb_id")
+    return int(tmdb_id) if tmdb_id else None
+
+
+async def _resolve_tmdb_id_by_tmdb(title: str, media_type: str, year: Optional[str]) -> Optional[int]:
+    if not title:
+        return None
+
+    try:
+        result = await tmdb_service.search_multi(title, 1)
+    except Exception:
+        return None
+
+    items = result.get("items") or result.get("results") or []
+    if not isinstance(items, list):
+        items = []
+
+    expected_type = "movie" if media_type == "movie" else "tv"
+    best, _ = _pick_best_tmdb_match(
+        title=title,
+        media_type=expected_type,
+        year=year,
+        items=[row for row in items if isinstance(row, dict)],
+    )
+    if not best:
+        return None
+    tmdb_id = best.get("tmdb_id")
+    return int(tmdb_id) if tmdb_id else None
+
+
+async def resolve_douban_explore_item(
+    *,
+    douban_id: str,
+    title: str,
+    media_type: str,
+    year: Optional[str],
+    tmdb_id: Optional[int] = None,
+) -> dict[str, Any]:
+    normalized_type = "tv" if media_type == "tv" else "movie"
+    normalized_douban_id = str(douban_id or "").strip()
+    normalized_title = str(title or "").strip()
+    had_negative_subject_cache = False
+
+    if tmdb_id:
+        tmdb_value = int(tmdb_id)
+        if normalized_douban_id:
+            subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+            _set_subject_tmdb_cache(subject_cache_key, tmdb_value)
+        return {
+            "resolved": True,
+            "media_type": normalized_type,
+            "tmdb_id": tmdb_value,
+            "confidence": 1.0,
+            "reason": "provided_tmdb_id",
+            "candidates": [],
+        }
+
+    if normalized_douban_id:
+        subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+        cache_hit, cached_tmdb_id = _get_cached_subject_tmdb_id(subject_cache_key)
+        if cache_hit:
+            if cached_tmdb_id:
+                return {
+                    "resolved": True,
+                    "media_type": normalized_type,
+                    "tmdb_id": int(cached_tmdb_id),
+                    "confidence": 0.99,
+                    "reason": "subject_cache_hit",
+                    "candidates": [],
+                }
+            had_negative_subject_cache = True
+
+    if not normalized_title:
+        return {
+            "resolved": False,
+            "media_type": normalized_type,
+            "tmdb_id": None,
+            "confidence": 0.0,
+            "reason": "missing_title",
+            "candidates": [],
+        }
+
+    candidates: list[dict[str, Any]] = []
+    nullbr_failed = False
+    nullbr_result: Optional[dict[str, Any]] = None
+    try:
+        nullbr_result = nullbr_service.search(normalized_title, 1)
+    except Exception:
+        nullbr_failed = True
+
+    if isinstance(nullbr_result, dict):
+        rows = nullbr_result.get("items") or nullbr_result.get("results") or []
+        if not isinstance(rows, list):
+            rows = []
+        best, candidates = _pick_best_tmdb_match(
+            title=normalized_title,
+            media_type=normalized_type,
+            year=year,
+            items=[row for row in rows if isinstance(row, dict)],
+        )
+        if best:
+            tmdb_value = int(best["tmdb_id"])
+            title_cache_key = _build_tmdb_cache_key(normalized_title, year, normalized_type)
+            _set_tmdb_id_cache(title_cache_key, tmdb_value)
+            if normalized_douban_id:
+                subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+                _set_subject_tmdb_cache(subject_cache_key, tmdb_value)
+            return {
+                "resolved": True,
+                "media_type": normalized_type,
+                "tmdb_id": tmdb_value,
+                "confidence": float(best.get("score") or 0.0),
+                "reason": "matched_by_nullbr",
+                "candidates": candidates,
+            }
+
+    tmdb_value = await _resolve_tmdb_id_by_tmdb(normalized_title, normalized_type, year)
+    if tmdb_value:
+        title_cache_key = _build_tmdb_cache_key(normalized_title, year, normalized_type)
+        _set_tmdb_id_cache(title_cache_key, tmdb_value)
+        if normalized_douban_id:
+            subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+            _set_subject_tmdb_cache(subject_cache_key, tmdb_value)
+        return {
+            "resolved": True,
+            "media_type": normalized_type,
+            "tmdb_id": tmdb_value,
+            "confidence": 0.93,
+            "reason": "matched_by_tmdb_fallback",
+            "candidates": candidates,
+        }
+
+    if normalized_douban_id:
+        subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+        _set_subject_tmdb_cache(subject_cache_key, None)
+
+    if nullbr_failed:
+        reason = "search_failed"
+    elif had_negative_subject_cache:
+        reason = "subject_cache_unresolved_rechecked"
+    else:
+        reason = "low_confidence_or_ambiguous"
+
+    return {
+        "resolved": False,
+        "media_type": normalized_type,
+        "tmdb_id": None,
+        "confidence": 0.0,
+        "reason": reason,
+        "candidates": candidates,
+    }
 
 
 def _normalize_douban_items(
@@ -289,21 +586,6 @@ def _normalize_douban_items(
         if media_type not in {"movie", "tv"}:
             media_type = default_media_type
 
-        year = _extract_year(item)
-        cache_key = _build_tmdb_cache_key(title=title, year=year, media_type=media_type)
-        cache_hit, cached_tmdb_id = _get_cached_tmdb_id(cache_key)
-        tmdb_id = cached_tmdb_id if cache_hit else None
-
-        if enqueue_tmdb_backfill and not cache_hit:
-            backfill_candidates.append(
-                {
-                    "cache_key": cache_key,
-                    "title": title,
-                    "media_type": media_type,
-                    "year": year,
-                }
-            )
-
         poster_url = _normalize_poster_url(item)
         if poster_url.startswith("http://"):
             poster_url = poster_url.replace("http://", "https://", 1)
@@ -311,6 +593,24 @@ def _normalize_douban_items(
         subject_id = _extract_douban_subject_id(item)
         if not subject_id:
             continue
+
+        year = _extract_year(item)
+        subject_cache_key = _build_subject_tmdb_cache_key(subject_id, media_type)
+        subject_cache_hit, subject_cached_tmdb_id = _get_cached_subject_tmdb_id(subject_cache_key)
+        cache_key = _build_tmdb_cache_key(title=title, year=year, media_type=media_type)
+        cache_hit, cached_tmdb_id = _get_cached_tmdb_id(cache_key)
+        tmdb_id = subject_cached_tmdb_id if subject_cache_hit else (cached_tmdb_id if cache_hit else None)
+
+        if enqueue_tmdb_backfill and not subject_cache_hit and not cache_hit:
+            backfill_candidates.append(
+                {
+                    "douban_id": subject_id,
+                    "cache_key": cache_key,
+                    "title": title,
+                    "media_type": media_type,
+                    "year": year,
+                }
+            )
 
         uri = item.get("uri")
         source_url = None
@@ -325,6 +625,7 @@ def _normalize_douban_items(
             {
                 "rank": rank_start + index,
                 "id": subject_id,
+                "douban_id": subject_id,
                 "tmdb_id": tmdb_id,
                 "media_type": media_type,
                 "title": title,
@@ -332,6 +633,7 @@ def _normalize_douban_items(
                 "poster_url": poster_url,
                 "intro": _extract_intro(item),
                 "rating": _extract_rating(item),
+                "mapping_status": "resolved" if tmdb_id else "unresolved",
                 "source_url": source_url,
             }
         )
@@ -342,18 +644,28 @@ def _normalize_douban_items(
 def _hydrate_tmdb_ids_from_cache(items: list[dict[str, Any]]) -> None:
     for item in items:
         if item.get("tmdb_id") is not None:
+            item["mapping_status"] = "resolved"
             continue
+        douban_id = str(item.get("douban_id") or item.get("id") or "").strip()
         title = item.get("title")
         media_type = item.get("media_type")
         if not isinstance(title, str) or not title:
             continue
         if media_type not in {"movie", "tv"}:
             continue
+        if douban_id:
+            subject_cache_key = _build_subject_tmdb_cache_key(douban_id, media_type)
+            subject_cache_hit, subject_cached_tmdb_id = _get_cached_subject_tmdb_id(subject_cache_key)
+            if subject_cache_hit:
+                item["tmdb_id"] = subject_cached_tmdb_id
+                item["mapping_status"] = "resolved" if subject_cached_tmdb_id else "unresolved"
+                continue
         year = item.get("year")
         cache_key = _build_tmdb_cache_key(title=title, year=year, media_type=media_type)
         cache_hit, cached_tmdb_id = _get_cached_tmdb_id(cache_key)
         if cache_hit:
             item["tmdb_id"] = cached_tmdb_id
+            item["mapping_status"] = "resolved" if cached_tmdb_id else "unresolved"
 
 
 async def _backfill_tmdb_ids(candidates: list[dict[str, Any]]) -> None:
@@ -361,17 +673,33 @@ async def _backfill_tmdb_ids(candidates: list[dict[str, Any]]) -> None:
 
     async def _worker(candidate: dict[str, Any]) -> None:
         cache_key = candidate["cache_key"]
+        douban_id = str(candidate.get("douban_id") or "").strip()
+        media_type = "tv" if candidate.get("media_type") == "tv" else "movie"
+        candidate_title = str(candidate.get("title") or "")
+        candidate_year = candidate.get("year") if isinstance(candidate.get("year"), str) else None
         try:
             async with semaphore:
                 resolved_id = await asyncio.to_thread(
                     _resolve_tmdb_id_by_nullbr,
-                    candidate["title"],
-                    candidate["media_type"],
-                    candidate["year"],
+                    candidate_title,
+                    media_type,
+                    candidate_year,
                 )
+                if not resolved_id:
+                    resolved_id = await _resolve_tmdb_id_by_tmdb(
+                        title=candidate_title,
+                        media_type=media_type,
+                        year=candidate_year,
+                    )
                 _set_tmdb_id_cache(cache_key, resolved_id)
+                if douban_id:
+                    subject_cache_key = _build_subject_tmdb_cache_key(douban_id, media_type)
+                    _set_subject_tmdb_cache(subject_cache_key, resolved_id)
         except Exception:
             _set_tmdb_id_cache(cache_key, None)
+            if douban_id:
+                subject_cache_key = _build_subject_tmdb_cache_key(douban_id, media_type)
+                _set_subject_tmdb_cache(subject_cache_key, None)
         finally:
             _tmdb_backfill_inflight.discard(cache_key)
 

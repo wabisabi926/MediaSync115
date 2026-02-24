@@ -357,7 +357,7 @@ const isSubscribedMedia = (mediaType, tmdbId) => {
 const markSubscribedOnItem = (item) => {
   if (!item || typeof item !== 'object') return
   const mediaType = item.media_type
-  const tmdbId = toValidTmdbId(item.tmdb_id || item.tmdbid || item.id)
+  const tmdbId = toValidTmdbId(item.tmdb_id || item.tmdbid)
   item.isSubscribed = isSubscribedMedia(mediaType, tmdbId)
 }
 
@@ -547,9 +547,10 @@ const normalizeExploreSectionItems = (items = [], rankStart = 1) => {
   return items.map((item, index) => ({
     ...item,
     id: item.id,
+    douban_id: item.douban_id || item.id,
     media_type: item.media_type || 'movie',
     rank: item.rank || rankStart + index,
-    isSubscribed: isSubscribedMedia(item.media_type || 'movie', item.tmdb_id || item.id),
+    isSubscribed: isSubscribedMedia(item.media_type || 'movie', item.tmdb_id),
     subscribing: false,
     saving: false,
     justSaved: false
@@ -1244,47 +1245,38 @@ const warmupPan115Resources = (mediaType, tmdbId) => {
 
 const resolveExploreItemRoute = async (item) => {
   const directTmdbId = toValidTmdbId(item.tmdb_id)
-  const directType = item.media_type || 'movie'
-  if (directTmdbId && (directType === 'movie' || directType === 'tv')) {
+  const directType = item.media_type === 'tv' ? 'tv' : 'movie'
+  if (exploreSource.value === 'tmdb' && directTmdbId) {
     return { media_type: directType, tmdb_id: directTmdbId }
   }
 
-  const title = item.title || item.name
-  if (!title) return null
-
   try {
-    const { data } = await searchApi.search(title, 1)
-    const candidates = (data.items || data.results || [])
-      .map(normalizeSearchResultItem)
-      .map((candidate) => ({
-        ...candidate,
-        tmdb_id: toValidTmdbId(candidate.tmdb_id || candidate.id || candidate.tmdbid)
-      }))
-      .filter((candidate) =>
-        candidate.tmdb_id
-        && (candidate.media_type === 'movie' || candidate.media_type === 'tv')
-      )
+    const payload = {
+      source: exploreSource.value,
+      id: item.id,
+      douban_id: item.douban_id || item.id,
+      title: item.title || item.name || '',
+      year: item.year || getYear(item) || '',
+      media_type: directType,
+      tmdb_id: exploreSource.value === 'tmdb' ? directTmdbId : null
+    }
+    let { data } = await searchApi.resolveExploreItem(payload)
 
-    if (!candidates.length) return null
-
-    const expectedType = item.media_type
-    let matched = null
-
-    if (expectedType === 'movie' || expectedType === 'tv') {
-      matched = candidates.find((candidate) => candidate.media_type === expectedType) || null
+    // Legacy backend may cache unresolved douban_id aggressively; retry once without douban_id.
+    if (!data?.resolved && data?.reason === 'subject_cache_unresolved') {
+      const retryPayload = {
+        ...payload,
+        id: '',
+        douban_id: ''
+      }
+      const retryResponse = await searchApi.resolveExploreItem(retryPayload)
+      data = retryResponse?.data || data
     }
 
-    if (!matched && item.year) {
-      matched = candidates.find((candidate) => getYear(candidate) === item.year) || null
-    }
-
-    if (!matched) {
-      matched = candidates[0]
-    }
-
-    return matched
-      ? { media_type: matched.media_type, tmdb_id: matched.tmdb_id }
-      : null
+    const resolvedTmdbId = toValidTmdbId(data?.tmdb_id)
+    if (!data?.resolved || !resolvedTmdbId) return null
+    const resolvedType = data.media_type === 'tv' ? 'tv' : 'movie'
+    return { media_type: resolvedType, tmdb_id: resolvedTmdbId }
   } catch (error) {
     console.error('Failed to resolve explore item route:', error)
     return null
@@ -1296,7 +1288,7 @@ const handleExploreItemClick = async (item) => {
   
   const routeInfo = await resolveExploreItemRoute(item)
   if (!routeInfo?.tmdb_id) {
-    ElMessage.warning('未找到可跳转的详情页')
+    ElMessage.warning('未能唯一匹配到 TMDB 详情，请稍后重试')
     return
   }
 

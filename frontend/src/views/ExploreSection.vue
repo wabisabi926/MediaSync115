@@ -135,7 +135,7 @@ const buildSubscribedKey = (mediaType, tmdbId) => {
 
 const applySubscribedFlag = (item) => {
   if (!item || typeof item !== 'object') return
-  const key = buildSubscribedKey(item.media_type, item.tmdb_id || item.id)
+  const key = buildSubscribedKey(item.media_type, item.tmdb_id)
   item.isSubscribed = Boolean(key) && subscribedIdMap.value.has(key)
 }
 
@@ -257,14 +257,6 @@ const handleImageError = (event) => {
   event.target.src = new URL('/no-poster.png', import.meta.url).href
 }
 
-const normalizeSearchResultItem = (item) => {
-  return {
-    ...item,
-    id: item.tmdbid || item.tmdb_id || item.id,
-    media_type: item.media_type
-  }
-}
-
 const extractPan115ShareLink = (resource) => {
   return String(resource?.share_link || resource?.share_url || '').trim()
 }
@@ -310,31 +302,39 @@ const fetchPan115ShareCandidates = async (mediaType, tmdbId) => {
 }
 
 const resolveItemRoute = async (item) => {
-  if (item.tmdb_id && (item.media_type === 'movie' || item.media_type === 'tv')) {
-    return { mediaType: item.media_type, tmdbId: item.tmdb_id }
+  const directTmdbId = toValidTmdbId(item.tmdb_id)
+  const directType = item.media_type === 'tv' ? 'tv' : 'movie'
+  if (exploreSource.value === 'tmdb' && directTmdbId) {
+    return { mediaType: directType, tmdbId: directTmdbId }
   }
 
-  const title = item.title || ''
-  if (!title) return null
-
   try {
-    const { data } = await searchApi.search(title, 1)
-    const candidates = (data.items || data.results || [])
-      .map(normalizeSearchResultItem)
-      .filter((candidate) => candidate.id && (candidate.media_type === 'movie' || candidate.media_type === 'tv'))
-
-    if (!candidates.length) return null
-
-    let matched = candidates.find((candidate) => candidate.media_type === item.media_type) || null
-    if (!matched && item.year) {
-      matched = candidates.find((candidate) => {
-        const date = candidate.release_date || candidate.first_air_date || ''
-        return date && date.slice(0, 4) === item.year
-      }) || null
+    const payload = {
+      source: exploreSource.value,
+      id: item.id,
+      douban_id: item.douban_id || item.id,
+      title: item.title || '',
+      year: item.year || '',
+      media_type: directType,
+      tmdb_id: exploreSource.value === 'tmdb' ? directTmdbId : null
     }
-    if (!matched) matched = candidates[0]
+    let { data } = await searchApi.resolveExploreItem(payload)
 
-    return { mediaType: matched.media_type, tmdbId: matched.id }
+    // Legacy backend may cache unresolved douban_id aggressively; retry once without douban_id.
+    if (!data?.resolved && data?.reason === 'subject_cache_unresolved') {
+      const retryPayload = {
+        ...payload,
+        id: '',
+        douban_id: ''
+      }
+      const retryResponse = await searchApi.resolveExploreItem(retryPayload)
+      data = retryResponse?.data || data
+    }
+
+    const resolvedTmdbId = toValidTmdbId(data?.tmdb_id)
+    if (!data?.resolved || !resolvedTmdbId) return null
+    const resolvedType = data.media_type === 'tv' ? 'tv' : 'movie'
+    return { mediaType: resolvedType, tmdbId: resolvedTmdbId }
   } catch {
     return null
   }
@@ -352,7 +352,7 @@ const warmupPan115 = (mediaType, tmdbId) => {
 const handleItemClick = async (item) => {
   const routeInfo = await resolveItemRoute(item)
   if (!routeInfo?.tmdbId) {
-    ElMessage.warning('未找到可跳转的详情页')
+    ElMessage.warning('未能唯一匹配到 TMDB 详情，请稍后重试')
     return
   }
 
@@ -511,7 +511,7 @@ const appendUniqueItems = (items) => {
   const exists = new Set(allItems.value.map((item) => `${item.id}|${item.rank}|${item.title}`))
   const nextItems = []
   for (const item of items) {
-    const normalizedTmdbId = toValidTmdbId(item.tmdb_id || item.id)
+    const normalizedTmdbId = toValidTmdbId(item.tmdb_id)
     const mediaType = item.media_type === 'tv' ? 'tv' : 'movie'
     const subscribedKey = buildSubscribedKey(mediaType, normalizedTmdbId)
     const normalizedItem = {

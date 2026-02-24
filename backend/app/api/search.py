@@ -8,12 +8,13 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
 
 from app.services.douban_explore_service import (
     DOUBAN_SECTION_SOURCES,
     fetch_douban_section,
+    resolve_douban_explore_item,
 )
 from app.services.nullbr_service import nullbr_service
 from app.services.pansou_service import pansou_service
@@ -907,6 +908,61 @@ async def get_explore_douban_section(
             "items": payload.get("items", []),
         },
     }
+
+
+@router.post("/explore/resolve")
+async def resolve_explore_item(payload: dict[str, Any] = Body(default={})):
+    source = str(payload.get("source") or "douban").strip().lower()
+    media_type = str(payload.get("media_type") or "movie").strip().lower()
+    if media_type not in {"movie", "tv"}:
+        media_type = "movie"
+
+    raw_tmdb_id = payload.get("tmdb_id")
+    tmdb_id: Optional[int] = None
+    if raw_tmdb_id is not None and str(raw_tmdb_id).strip():
+        try:
+            parsed_tmdb_id = int(raw_tmdb_id)
+            if parsed_tmdb_id > 0:
+                tmdb_id = parsed_tmdb_id
+        except Exception:
+            tmdb_id = None
+
+    if source == "tmdb":
+        if not tmdb_id:
+            return {
+                "resolved": False,
+                "media_type": media_type,
+                "tmdb_id": None,
+                "confidence": 0.0,
+                "reason": "missing_tmdb_id",
+                "candidates": [],
+            }
+        return {
+            "resolved": True,
+            "media_type": media_type,
+            "tmdb_id": tmdb_id,
+            "confidence": 1.0,
+            "reason": "provided_tmdb_id",
+            "candidates": [],
+        }
+
+    title = str(payload.get("title") or payload.get("name") or "").strip()
+    year_value = str(payload.get("year") or "").strip()[:4]
+    if year_value and not year_value.isdigit():
+        year_value = ""
+    year = year_value or None
+    douban_id = str(payload.get("douban_id") or payload.get("id") or "").strip()
+
+    result = await resolve_douban_explore_item(
+        douban_id=douban_id,
+        title=title,
+        media_type=media_type,
+        year=year,
+        tmdb_id=tmdb_id,
+    )
+    result["source"] = "douban"
+    result["douban_id"] = douban_id
+    return result
 
 
 @router.get("/explore/poster")

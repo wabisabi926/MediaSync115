@@ -46,6 +46,7 @@ export const searchApi = {
     api.get('/search/explore/sections', { params: { source, limit, refresh } }),
   getExploreSection: (source = 'douban', sectionKey, limit = 30, refresh = false, start = 0) =>
     api.get(`/search/explore/section/${sectionKey}`, { params: { source, limit, refresh, start } }),
+  resolveExploreItem: (payload) => api.post('/search/explore/resolve', payload),
   getExploreDoubanSections: (limit = 24, refresh = false) =>
     api.get('/search/explore/douban-sections', { params: { limit, refresh } }),
   getExploreDoubanSection: (sectionKey, limit = 30, refresh = false, start = 0) =>
