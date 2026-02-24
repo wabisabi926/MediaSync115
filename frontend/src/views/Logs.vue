@@ -32,7 +32,11 @@
             <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="message" label="说明" min-width="320" show-overflow-tooltip />
+        <el-table-column label="说明" min-width="320" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="log-message" :class="`is-${row.status || 'info'}`">{{ row.message || '-' }}</span>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -125,6 +129,16 @@ onMounted(() => {
       gap: 10px;
       align-items: center;
     }
+  }
+
+  .log-message {
+    color: #9bb3cc;
+  }
+}
+
+[data-theme='light'] .logs-page {
+  .log-message {
+    color: #4f6682;
   }
 }
 </style>
