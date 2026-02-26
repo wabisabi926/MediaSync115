@@ -55,6 +55,7 @@
           <el-alert
             v-if="riskHealth.checked"
             :title="riskHealth.summary || '115状态检测完成'"
+            :description="riskHealth.detail || undefined"
             :type="riskHealthAlertType"
             :closable="false"
             show-icon
@@ -470,7 +471,8 @@ const connectionResult = reactive({
 const riskHealth = reactive({
   checked: false,
   status: '',
-  summary: ''
+  summary: '',
+  detail: ''
 })
 
 const riskHealthTagType = computed(() => {
@@ -579,6 +581,12 @@ const fetchRiskHealth = async (notify = false) => {
     riskHealth.checked = true
     riskHealth.status = data.status || ''
     riskHealth.summary = data.summary || ''
+    const checks = data.checks || {}
+    riskHealth.detail =
+      checks.file_list?.message ||
+      checks.offline_tasks?.message ||
+      checks.cookie?.message ||
+      ''
     if (notify) {
       if (data.status === 'healthy') {
         ElMessage.success(data.summary || '115接口状态正常')
@@ -590,6 +598,7 @@ const fetchRiskHealth = async (notify = false) => {
     riskHealth.checked = true
     riskHealth.status = 'unavailable'
     riskHealth.summary = error.response?.data?.detail || '115状态检测失败'
+    riskHealth.detail = ''
     if (notify) {
       ElMessage.error(riskHealth.summary)
     }
@@ -618,6 +627,7 @@ const handleSaveCookie = async () => {
     settingsForm.value.cookie = ''
     await fetchCookieInfo()
     await checkCookie()
+    await fetchRiskHealth()
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || 'Cookie保存失败')
   } finally {

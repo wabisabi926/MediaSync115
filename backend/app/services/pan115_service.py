@@ -94,8 +94,6 @@ class Pan115Service:
         Returns:
             文件列表信息
         """
-        # fs_files 的第一个参数 payload 可以是目录ID或字典
-        # 传入字典时可以包含更多参数
         payload = {
             "cid": cid,
             "offset": offset,
@@ -103,14 +101,26 @@ class Pan115Service:
             "asc": asc,
             "o": o
         }
-        result = await self._async_call("fs_files", payload)
-        data = check_response(result)
-        # 确保返回字典格式
-        if isinstance(data, list):
-            return {"data": data}
-        elif isinstance(data, dict):
-            return data
-        return {"data": []}
+        attempts = (
+            ("fs_files", {"base_url": "https://webapi.115.com"}),
+            ("fs_files", {}),
+            ("fs_files_app", {"app": "android"}),
+        )
+
+        last_error: Exception | None = None
+        for method_name, extra_kwargs in attempts:
+            try:
+                result = await self._async_call(method_name, payload, **extra_kwargs)
+                data = check_response(result)
+                return self._normalize_file_list_result(data)
+            except Exception as exc:
+                last_error = exc
+                # 凭证失效时不再回退，直接抛给上层进行鉴权提示
+                if self._is_auth_related_error(str(exc)):
+                    raise
+                continue
+
+        raise last_error or Exception("获取文件列表失败")
     
     async def create_folder(self, pid: str, name: str) -> Dict[str, Any]:
         """
@@ -803,6 +813,46 @@ class Pan115Service:
                 await asyncio.sleep(delay)
 
         return False
+
+    @staticmethod
+    def _normalize_file_list_result(data: Any) -> Dict[str, Any]:
+        """统一文件列表返回结构，保证 data 为列表。"""
+        if isinstance(data, list):
+            return {"data": data}
+        if isinstance(data, dict):
+            result = dict(data)
+            raw_data = result.get("data")
+            if isinstance(raw_data, list):
+                return result
+            if isinstance(raw_data, dict):
+                nested_list = raw_data.get("list")
+                if isinstance(nested_list, list):
+                    result["data"] = nested_list
+                    return result
+            top_level_list = result.get("list")
+            if isinstance(top_level_list, list):
+                result["data"] = top_level_list
+                return result
+            result["data"] = []
+            return result
+        return {"data": []}
+
+    @staticmethod
+    def _is_auth_related_error(error_text: str) -> bool:
+        text = str(error_text or "").lower()
+        if not text:
+            return False
+        auth_tokens = (
+            "cookie",
+            "eauth",
+            "errno': 990001",
+            '"errno": 990001',
+            "errno=990001",
+            "errno: 990001",
+            "重新登录",
+            "登录超时",
+        )
+        return any(token in text for token in auth_tokens)
 
     @staticmethod
     def _is_retryable_save_error(error_text: str) -> bool:

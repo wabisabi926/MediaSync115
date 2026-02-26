@@ -27,6 +27,10 @@ def is_retryable_115_error(error_msg: str) -> bool:
         "繁忙",
         "timeout",
         "timed out",
+        "590075",
+        "990005",
+        "ebusy",
+        "eagain",
     )
     return any(token in text for token in retry_tokens)
 
@@ -282,7 +286,7 @@ async def get_pan115_risk_health():
         checks["file_list"] = {"ok": False, "message": str(exc)}
         return {
             "status": status,
-            "summary": "文件列表接口不可用",
+            "summary": "文件列表接口临时受限" if status == "rate_limited" else "文件列表接口不可用",
             "checks": checks,
         }
 
@@ -297,7 +301,7 @@ async def get_pan115_risk_health():
         checks["offline_tasks"] = {"ok": False, "message": str(exc)}
         return {
             "status": status,
-            "summary": "离线任务列表接口受限",
+            "summary": "离线任务列表接口临时受限" if status == "rate_limited" else "离线任务列表接口受限",
             "checks": checks,
         }
 
