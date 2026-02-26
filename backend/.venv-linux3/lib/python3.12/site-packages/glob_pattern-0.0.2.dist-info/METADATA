@@ -1,0 +1,43 @@
+Metadata-Version: 2.1
+Name: glob_pattern
+Version: 0.0.2
+Summary: Python shell glob pattern.
+Home-page: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/glob_pattern
+License: MIT
+Keywords: glob,glob_pattern
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Dist: posixpatht (>=0.0.3)
+Project-URL: Repository, https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/glob_pattern
+Description-Content-Type: text/markdown
+
+# Python shell glob pattern.
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/glob_pattern/)
+
+```console
+pip install -U glob_pattern
+```
+
+## Usage
+
+```python
+import glob_pattern
+```
+

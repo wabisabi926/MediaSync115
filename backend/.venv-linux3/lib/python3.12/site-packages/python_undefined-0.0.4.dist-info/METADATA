@@ -1,0 +1,53 @@
+Metadata-Version: 2.4
+Name: python-undefined
+Version: 0.0.4
+Summary: Python undefined type.
+License: MIT
+License-File: LICENSE
+Keywords: undefined
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Dist: typing_extensions (>=4.15)
+Project-URL: Homepage, https://github.com/ChenyangGao/python-modules/tree/main/python-undefined
+Project-URL: Repository, https://github.com/ChenyangGao/python-modules/tree/main/python-undefined
+Description-Content-Type: text/markdown
+
+# Python undefined type.
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/python-undefined/)
+
+```console
+pip install -U python-undefined
+```
+
+## Usage
+
+```python
+from undefined import undefined, is_undefined, Undefined
+
+x: int | Undefined = 1
+if is_undefined(x):
+    ...
+else:
+    # then x is narrowed to int
+    ...
+```
+

@@ -1,0 +1,4 @@
+[console_scripts]
+python-startfile=startfile.__main__:main
+startfile=startfile.__main__:main
+

@@ -1,0 +1,44 @@
+Metadata-Version: 2.4
+Name: python-ensure
+Version: 0.0.2
+Summary: Python functions used to ensure something.
+License: MIT
+License-File: LICENSE
+Keywords: ensure
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.12,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Dist: integer_tool (>=0.0.5)
+Project-URL: Homepage, https://github.com/ChenyangGao/python-modules/tree/main/python-ensure
+Project-URL: Repository, https://github.com/ChenyangGao/python-modules/tree/main/python-ensure
+Description-Content-Type: text/markdown
+
+# Python functions used to ensure something.
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/python-ensure/)
+
+```console
+pip install -U python-ensure
+```
+
+## Usage
+
+```python
+import ensure
+```
+

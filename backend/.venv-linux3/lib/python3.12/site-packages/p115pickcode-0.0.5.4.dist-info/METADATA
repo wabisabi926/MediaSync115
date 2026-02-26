@@ -1,0 +1,43 @@
+Metadata-Version: 2.1
+Name: p115pickcode
+Version: 0.0.5.4
+Summary: 115 transcoding between pickcode and id.
+Home-page: https://github.com/ChenyangGao/p115client/tree/main/modules/p115pickcode
+License: MIT
+Keywords: python-115,pickcode,id
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Project-URL: Repository, https://github.com/ChenyangGao/p115client/tree/main/modules/p115pickcode
+Description-Content-Type: text/markdown
+
+# 115 的 pickcode 和 id 的相互转换
+
+## 安装
+
+你可以通过 [pypi](https://pypi.org/project/p115pickcode/) 安装
+
+```console
+pip install -U p115pickcode
+```
+
+## 用法
+
+```python
+import p115pickcode
+```
+

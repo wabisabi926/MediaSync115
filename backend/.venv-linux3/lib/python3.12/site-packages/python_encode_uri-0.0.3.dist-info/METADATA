@@ -1,0 +1,43 @@
+Metadata-Version: 2.1
+Name: python-encode_uri
+Version: 0.0.3
+Summary: Encodes a URI by replacing each instance of certain characters.
+Home-page: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/encode_uri
+License: MIT
+Keywords: encode_uri
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Project-URL: Repository, https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/encode_uri
+Description-Content-Type: text/markdown
+
+# Encodes a URI by replacing each instance of certain characters..
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/encode_uri/)
+
+```console
+pip install -U encode_uri
+```
+
+## Usage
+
+```python
+from encode_uri import encode_uri, encode_uri_component, encode_uri_component_loose
+```
+

@@ -1,0 +1,67 @@
+Metadata-Version: 2.1
+Name: python-startfile
+Version: 0.0.2.1
+Summary: Python startfile.
+Home-page: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-startfile
+License: MIT
+Keywords: startfile
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.4
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Project-URL: Repository, https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-startfile
+Description-Content-Type: text/markdown
+
+# Python startfile.
+
+## Installation
+
+You can install via [pypi](https://pypi.org/project/python-startfile/)
+
+```console
+pip install -U python-startfile
+```
+
+## Usage
+
+### Module
+
+```python
+>>> from startfile import startfile, startfile_async
+```
+
+### Commad
+
+```console
+$ startfile -h
+usage: startfile.py [-h] [-v] [path ...]
+
+Start file(s) with its/their associated application.
+
+positional arguments:
+  path           paths to files or directories
+
+options:
+  -h, --help     show this help message and exit
+  -v, --version  print the current version
+```
+

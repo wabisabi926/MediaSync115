@@ -1,0 +1,45 @@
+Metadata-Version: 2.4
+Name: errno2
+Version: 0.0.5
+Summary: Python another errno.
+License: MIT
+License-File: LICENSE
+Keywords: errno
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Project-URL: Homepage, https://github.com/ChenyangGao/python-modules/tree/main/errno2
+Project-URL: Repository, https://github.com/ChenyangGao/python-modules/tree/main/errno2
+Description-Content-Type: text/markdown
+
+# Python another errno.
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/errno2/)
+
+```console
+pip install -U errno2
+```
+
+## Usage
+
+```python
+from errno2 import errno
+```
+

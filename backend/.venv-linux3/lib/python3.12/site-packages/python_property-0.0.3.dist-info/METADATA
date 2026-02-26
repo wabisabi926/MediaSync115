@@ -1,0 +1,42 @@
+Metadata-Version: 2.1
+Name: python-property
+Version: 0.0.3
+Summary: Python property discriptors
+Home-page: https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property
+License: MIT
+Keywords: property
+Author: ChenyangGao
+Author-email: wosiwujm@gmail.com
+Requires-Python: >=3.10,<4.0
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Project-URL: Repository, https://github.com/ChenyangGao/web-mount-packs/tree/main/python-module/python-property
+Description-Content-Type: text/markdown
+
+# Python property discriptors.
+
+## Installation
+
+You can install from [pypi](https://pypi.org/project/python-property/)
+
+```console
+pip install -U python-property
+```
+
+## Usage
+
+```python
+import property
+```
+
