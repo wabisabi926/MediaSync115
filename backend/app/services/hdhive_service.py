@@ -74,15 +74,12 @@ class HDHiveService:
         normalized = normalized.replace('\\"', '"')
         normalized = normalized.replace("\\/", "/")
         normalized = normalized.replace("\\u0026", "&")
-        normalized = normalized.replace("\\n", "\n")
-        normalized = normalized.replace("\\t", "\t")
         candidates.append(normalized)
 
-        try:
-            unicode_escaped = bytes(payload, "utf-8").decode("unicode_escape")
-            candidates.append(unicode_escaped)
-        except Exception:
-            pass
+        # Some pages contain a trailing backslash before physical newline in script payload.
+        # Keep JSON escapes as-is to avoid mojibake on CJK text.
+        candidates.append(normalized.replace("\\\n", ""))
+        candidates.append(normalized.replace("\\\r\n", ""))
 
         parsed_values: list[Any] = []
         seen: set[str] = set()
