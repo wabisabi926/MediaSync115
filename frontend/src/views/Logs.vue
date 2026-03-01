@@ -22,7 +22,7 @@
 
     <el-card>
       <div class="table-wrap">
-        <el-table :data="logs" v-loading="loading" size="small" stripe>
+        <el-table :data="logs" v-loading="loading" size="small">
         <el-table-column prop="created_at" label="时间" min-width="170" :formatter="formatBeijingTableCell" />
         <el-table-column prop="channel" label="渠道" width="90" />
         <el-table-column prop="run_id" label="Run ID" min-width="230" />
@@ -147,6 +147,19 @@ onMounted(() => {
 
     .el-table {
       min-width: 1050px;
+
+      :deep(.el-table__body tr > td) {
+        background: rgba(61, 119, 188, 0.08);
+        border-bottom-color: rgba(79, 145, 226, 0.18);
+      }
+
+      :deep(.el-table__body tr.el-table__row--striped > td) {
+        background: rgba(61, 119, 188, 0.08);
+      }
+
+      :deep(.el-table__body tr:hover > td) {
+        background: rgba(45, 153, 255, 0.14);
+      }
     }
   }
 
