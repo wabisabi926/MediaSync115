@@ -524,17 +524,35 @@ const seedhubMagnetResources = computed(() =>
   magnetResources.value.filter((item) => item?.source_service === 'seedhub')
 )
 
+const buildPan115MergeKey = (item = {}) => {
+  const sourceService = String(item?.source_service || 'nullbr').trim() || 'nullbr'
+  const slug = String(item?.slug || '').trim()
+  if (slug) return `${sourceService}|slug:${slug}`
+  const shareLink = String(item?.share_link || '').trim()
+  const title = String(item?.title || '').trim()
+  return `${sourceService}|${shareLink}|${title}`
+}
+
 const mergePan115Resources = (primaryList = [], secondaryList = []) => {
   const merged = []
-  const seen = new Set()
-  for (const item of [...primaryList, ...secondaryList]) {
+  const indexMap = new Map()
+  for (const item of primaryList) {
     if (!item || typeof item !== 'object') continue
-    const shareLink = String(item.share_link || '').trim()
-    const title = String(item.title || '').trim()
-    const key = `${shareLink}|${title}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    merged.push(item)
+    const key = buildPan115MergeKey(item)
+    if (indexMap.has(key)) continue
+    indexMap.set(key, merged.length)
+    merged.push({ ...item })
+  }
+  for (const item of secondaryList) {
+    if (!item || typeof item !== 'object') continue
+    const key = buildPan115MergeKey(item)
+    if (indexMap.has(key)) {
+      const index = indexMap.get(key)
+      merged[index] = { ...merged[index], ...item }
+      continue
+    }
+    indexMap.set(key, merged.length)
+    merged.push({ ...item })
   }
   return merged
 }
