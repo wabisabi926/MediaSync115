@@ -203,10 +203,10 @@
                   </el-table-column>
                   <el-table-column label="操作" width="180" align="center" fixed="right">
                     <template #default="{ row }">
-                      <el-button type="primary" size="small" :disabled="row.pan115_savable === false" @click="handleSaveToPan115(row)">
+                      <el-button type="primary" size="small" :disabled="isPan115ActionDisabled(row)" @click="handleSaveToPan115(row)">
                         一键转存
                       </el-button>
-                      <el-button size="small" :disabled="row.pan115_savable === false" @click="handleSelectSave(row)">
+                      <el-button size="small" :disabled="isPan115ActionDisabled(row)" @click="handleSelectSave(row)">
                         选集
                       </el-button>
                     </template>
@@ -398,7 +398,7 @@
 <script setup>
 import { ref, onBeforeUnmount, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { searchApi, subscriptionApi, pan115Api } from '@/api'
 
 const route = useRoute()
@@ -446,6 +446,7 @@ const PAN115_CACHE_TTL_MS = 30 * 60 * 1000
 // 转存对话框相关
 // 转存相关
 const saving = ref(false)
+const hdhiveUnlockingSlugs = ref(new Set())
 
 // 选集转存相关
 const selectSaveDialogVisible = ref(false)
@@ -560,6 +561,85 @@ const getResourceSourceLabel = (service) => {
   if (service === 'hdhive') return 'HDHive'
   if (service === 'nullbr') return 'Nullbr'
   return service || '未知'
+}
+
+const resolvePanShareLink = (row) => String(row?.share_link || row?.share_url || row?.pan115_share_link || '').trim()
+
+const isHdhiveResourceLocked = (row) => {
+  if (!row || row.source_service !== 'hdhive') return false
+  if (row.hdhive_locked === true) return true
+  const shareLink = resolvePanShareLink(row)
+  return !shareLink && Number(row.unlock_points || 0) > 0
+}
+
+const isPan115ActionDisabled = (row) => {
+  if (isHdhiveResourceLocked(row)) return false
+  return row?.pan115_savable === false
+}
+
+const showHdhiveNeedPointsNotice = async (row, reason = '') => {
+  const points = Number(row?.unlock_points || 0)
+  const lockMessage = String(row?.hdhive_lock_message || reason || '').trim()
+  const lines = [
+    points > 0 ? `该资源需要支付 ${points} 积分解锁提取码。` : '该资源需要先在 HDHive 解锁提取码。',
+    lockMessage || '解锁后会继续当前操作。'
+  ]
+  try {
+    await ElMessageBox.confirm(
+      lines.join('\n'),
+      'HDHive 积分解锁提示',
+      {
+        confirmButtonText: '确认解锁',
+        cancelButtonText: '取消',
+        type: 'warning',
+        distinguishCancelAndClose: true
+      }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+const ensureHdhiveShareLink = async (row, actionLabel = '转存') => {
+  const currentLink = resolvePanShareLink(row)
+  if (currentLink) return currentLink
+  if (!isHdhiveResourceLocked(row)) return currentLink
+
+  const confirmed = await showHdhiveNeedPointsNotice(row)
+  if (!confirmed) return ''
+
+  const slug = String(row?.slug || '').trim()
+  if (!slug) {
+    ElMessage.error('缺少 HDHive 资源标识，无法自动解锁')
+    return ''
+  }
+  if (hdhiveUnlockingSlugs.value.has(slug)) {
+    ElMessage.info('正在解锁该资源，请稍候')
+    return ''
+  }
+
+  hdhiveUnlockingSlugs.value.add(slug)
+  try {
+    const { data } = await searchApi.unlockHdhiveResource(slug)
+    const shareLink = String(data?.share_link || '').trim()
+    if (!shareLink) {
+      throw new Error(data?.message || '未获取到分享链接')
+    }
+    row.share_link = shareLink
+    row.pan115_savable = true
+    row.hdhive_locked = false
+    row.hdhive_lock_code = ''
+    row.hdhive_lock_message = ''
+    ElMessage.success(data?.message || `HDHive 解锁成功，开始${actionLabel}`)
+    return shareLink
+  } catch (error) {
+    const detail = String(error.response?.data?.detail || error.message || '').trim()
+    ElMessage.error(detail || 'HDHive 自动解锁失败')
+    return ''
+  } finally {
+    hdhiveUnlockingSlugs.value.delete(slug)
+  }
 }
 
 const fetchTv = async () => {
@@ -830,8 +910,11 @@ const checkSubscribed = async () => {
 }
 
 const handleSaveToPan115 = async (item) => {
-  // 检查是否有分享链接
-  if (!item.share_link) {
+  let shareLink = resolvePanShareLink(item)
+  if (!shareLink && item?.source_service === 'hdhive') {
+    shareLink = await ensureHdhiveShareLink(item, '一键转存')
+  }
+  if (!shareLink) {
     ElMessage.warning('该资源暂无分享链接')
     return
   }
@@ -851,7 +934,7 @@ const handleSaveToPan115 = async (item) => {
   try {
     // 由后端统一解析分享链接并执行转存
     const { data } = await pan115Api.saveShareToFolder(
-      item.share_link,
+      shareLink,
       folderName,
       defaultFolderId,
       '',
@@ -873,13 +956,25 @@ const handleSaveToPan115 = async (item) => {
       ElMessage.error('115接口触发风控，请稍后重试')
       return
     }
+    if (item?.source_service === 'hdhive' && (detail.includes('4100012') || detail.includes('请输入访问码'))) {
+      await ElMessageBox.alert(
+        '该 HDHive 资源仍需先支付积分解锁提取码后才能转存，请先在 HDHive 完成解锁。',
+        '需要积分解锁',
+        { type: 'warning' }
+      )
+      return
+    }
     ElMessage.error(detail || error.message || '转存失败')
   }
 }
 
 // 选集转存相关方法
 const handleSelectSave = async (item) => {
-  if (!item.share_link) {
+  let shareLink = resolvePanShareLink(item)
+  if (!shareLink && item?.source_service === 'hdhive') {
+    shareLink = await ensureHdhiveShareLink(item, '选集转存')
+  }
+  if (!shareLink) {
     ElMessage.warning('该资源暂无分享链接')
     return
   }
@@ -894,7 +989,7 @@ const handleSelectSave = async (item) => {
 
   const seasonSuffix = selectedSeason.value ? ` S${String(selectedSeason.value).padStart(2, '0')}` : ''
   selectSaveForm.value = {
-    shareLink: item.share_link,
+    shareLink,
     targetFolder: defaultFolderId,
     newFolderName: tv.value.name + ' (' + tv.value.first_air_date?.split('-')[0] + ')' + seasonSuffix
   }
@@ -906,7 +1001,7 @@ const handleSelectSave = async (item) => {
   extractingFiles.value = true
 
   try {
-    const { data } = await pan115Api.extractShareFiles(item.share_link)
+    const { data } = await pan115Api.extractShareFiles(shareLink)
     if (data && Array.isArray(data.list)) {
       // 过滤视频文件
       const videoRegex = /\.(mp4|mkv|avi|rmvb|flv|ts|mov|wmv)$/i
@@ -916,6 +1011,15 @@ const handleSelectSave = async (item) => {
       ElMessage.warning('提取文件列表失败，分享可能已失效')
     }
   } catch (error) {
+    const detail = String(error.response?.data?.detail || error.message || '').trim()
+    if (item?.source_service === 'hdhive' && (detail.includes('4100012') || detail.includes('请输入访问码'))) {
+      await ElMessageBox.alert(
+        '该 HDHive 资源仍需先支付积分解锁提取码后才能选集，请先在 HDHive 完成解锁。',
+        '需要积分解锁',
+        { type: 'warning' }
+      )
+      return
+    }
     ElMessage.error('提取文件列表失败')
   } finally {
     extractingFiles.value = false
