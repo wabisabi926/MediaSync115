@@ -313,9 +313,9 @@
                     <span class="priority-name">{{ sourceLabelMap[source] || source }}</span>
                     <el-tag
                       size="small"
-                      :type="sourceConfigStatus[source]?.ok ? 'success' : 'warning'"
+                      :type="sourceConnectionStatus[source]?.checked ? (sourceConnectionStatus[source]?.ok ? 'success' : 'danger') : 'info'"
                     >
-                      {{ sourceConfigStatus[source]?.text || '待检查' }}
+                      {{ sourceConnectionStatus[source]?.text || '未检测' }}
                     </el-tag>
                   </div>
                   <div class="priority-actions">
@@ -331,9 +331,14 @@
                   </div>
                 </div>
               </div>
+              <div class="priority-actions-row">
+                <el-button size="small" :loading="checkingSourceStatus" @click="refreshSourceConnectionStatus">
+                  刷新连接状态
+                </el-button>
+              </div>
               <div class="priority-tips">
                 <el-text size="small" type="info">
-                  保存后，订阅资源会按以上顺序依次查找；保存时会校验所选来源的必要配置和连通性。
+                  保存后，订阅资源会按以上顺序依次查找；这里显示的是各渠道实时连接状态。
                 </el-text>
               </div>
             </el-form-item>
@@ -527,14 +532,6 @@ const sourceLabelMap = {
   pansou: 'Pansou',
 }
 const resourcePriority = ref(['nullbr', 'hdhive', 'pansou'])
-const savedRuntimeConfig = ref({
-  nullbr_app_id: '',
-  nullbr_api_key: '',
-  nullbr_base_url: '',
-  hdhive_cookie: '',
-  hdhive_base_url: '',
-  pansou_base_url: ''
-})
 
 const pansouForm = ref({
   baseUrl: ''
@@ -557,6 +554,7 @@ const runningSubscriptionChannel = ref('')
 const runningTaskId = ref('')
 const runningTaskMessage = ref('')
 const pansouHealthStatus = ref('')
+const checkingSourceStatus = ref(false)
 const subscriptionLogs = ref([])
 const loadingSubscriptionLogs = ref(false)
 
@@ -590,6 +588,11 @@ const hdhiveStatus = reactive({
   message: '',
   user: null
 })
+const sourceConnectionStatus = reactive({
+  nullbr: { checked: false, ok: false, text: '未检测' },
+  hdhive: { checked: false, ok: false, text: '未检测' },
+  pansou: { checked: false, ok: false, text: '未检测' }
+})
 
 const riskHealthTagType = computed(() => {
   if (riskHealth.status === 'healthy') return 'success'
@@ -614,27 +617,57 @@ const riskHealthAlertType = computed(() => {
   return 'info'
 })
 
-const sourceConfigStatus = computed(() => {
-  const nullbrAppId = String(savedRuntimeConfig.value.nullbr_app_id || '').trim()
-  const nullbrApiKey = String(savedRuntimeConfig.value.nullbr_api_key || '').trim()
-  const nullbrBaseUrl = String(savedRuntimeConfig.value.nullbr_base_url || '').trim()
-  const hdhiveCookie = String(savedRuntimeConfig.value.hdhive_cookie || '').trim()
-  const hdhiveBaseUrl = String(savedRuntimeConfig.value.hdhive_base_url || '').trim()
-  const pansouBaseUrl = String(savedRuntimeConfig.value.pansou_base_url || '').trim()
+const refreshSourceConnectionStatus = async () => {
+  checkingSourceStatus.value = true
+  try {
+    const [nullbrResult, hdhiveResult, pansouResult] = await Promise.allSettled([
+      settingsApi.checkNullbr(),
+      settingsApi.checkHdhive(),
+      pansouApi.health()
+    ])
 
-  const nullbrOk = Boolean(
-    nullbrAppId &&
-    nullbrApiKey &&
-    nullbrBaseUrl
-  )
-  const hdhiveOk = Boolean(hdhiveCookie && hdhiveBaseUrl)
-  const pansouOk = Boolean(pansouBaseUrl)
-  return {
-    nullbr: { ok: nullbrOk, text: nullbrOk ? '已保存配置' : '缺少配置' },
-    hdhive: { ok: hdhiveOk, text: hdhiveOk ? '已保存配置' : '缺少 Cookie/地址' },
-    pansou: { ok: pansouOk, text: pansouOk ? '已保存配置' : '缺少地址' },
+    if (nullbrResult.status === 'fulfilled') {
+      const payload = nullbrResult.value?.data || {}
+      const ok = !!payload.valid
+      sourceConnectionStatus.nullbr.checked = true
+      sourceConnectionStatus.nullbr.ok = ok
+      sourceConnectionStatus.nullbr.text = ok ? '连接正常' : `连接失败: ${payload.message || '凭证不可用'}`
+    } else {
+      const message = nullbrResult.reason?.response?.data?.detail || nullbrResult.reason?.message || '请求失败'
+      sourceConnectionStatus.nullbr.checked = true
+      sourceConnectionStatus.nullbr.ok = false
+      sourceConnectionStatus.nullbr.text = `连接失败: ${message}`
+    }
+
+    if (hdhiveResult.status === 'fulfilled') {
+      const payload = hdhiveResult.value?.data || {}
+      const ok = !!payload.valid
+      sourceConnectionStatus.hdhive.checked = true
+      sourceConnectionStatus.hdhive.ok = ok
+      sourceConnectionStatus.hdhive.text = ok ? '连接正常' : `连接失败: ${payload.message || '凭证不可用'}`
+    } else {
+      const message = hdhiveResult.reason?.response?.data?.detail || hdhiveResult.reason?.message || '请求失败'
+      sourceConnectionStatus.hdhive.checked = true
+      sourceConnectionStatus.hdhive.ok = false
+      sourceConnectionStatus.hdhive.text = `连接失败: ${message}`
+    }
+
+    if (pansouResult.status === 'fulfilled') {
+      const payload = pansouResult.value?.data || {}
+      const ok = String(payload.status || '') === 'healthy'
+      sourceConnectionStatus.pansou.checked = true
+      sourceConnectionStatus.pansou.ok = ok
+      sourceConnectionStatus.pansou.text = ok ? '连接正常' : `连接失败: ${payload.status || 'unhealthy'}`
+    } else {
+      const message = pansouResult.reason?.response?.data?.detail || pansouResult.reason?.message || '请求失败'
+      sourceConnectionStatus.pansou.checked = true
+      sourceConnectionStatus.pansou.ok = false
+      sourceConnectionStatus.pansou.text = `连接失败: ${message}`
+    }
+  } finally {
+    checkingSourceStatus.value = false
   }
-})
+}
 
 // 默认转存文件夹相关
 const defaultFolderForm = ref({
@@ -811,7 +844,6 @@ const fetchPansouConfig = async () => {
   try {
     const { data } = await pansouApi.getConfig()
     pansouForm.value.baseUrl = data.base_url || ''
-    savedRuntimeConfig.value.pansou_base_url = data.base_url || ''
     pansouHealthStatus.value = data.health?.status || ''
   } catch (error) {
     console.error('Failed to fetch pansou config:', error)
@@ -828,8 +860,8 @@ const handleSavePansouConfig = async () => {
   try {
     const { data } = await pansouApi.updateConfig(pansouForm.value.baseUrl)
     pansouForm.value.baseUrl = data.base_url || pansouForm.value.baseUrl
-    savedRuntimeConfig.value.pansou_base_url = pansouForm.value.baseUrl
     pansouHealthStatus.value = data.health?.status || ''
+    await refreshSourceConnectionStatus()
     ElMessage.success('Pansou 配置已保存')
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || 'Pansou 配置保存失败')
@@ -878,6 +910,7 @@ const handleSaveNullbr = async () => {
       nullbr_base_url: nullbrForm.value.baseUrl
     })
     await fetchRuntimeSettings()
+    await refreshSourceConnectionStatus()
     ElMessage.success('Nullbr 配置已保存')
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || 'Nullbr 配置保存失败')
@@ -926,6 +959,7 @@ const handleSaveHdhive = async () => {
       hdhive_cookie: hdhiveForm.value.cookie
     })
     await fetchRuntimeSettings()
+    await refreshSourceConnectionStatus()
     ElMessage.success('HDHive Cookie 已保存')
     await checkHdhive(false)
   } catch (error) {
@@ -1002,13 +1036,6 @@ const handleSaveTmdb = () => {
 const fetchRuntimeSettings = async () => {
   try {
     const { data } = await settingsApi.getRuntime()
-    savedRuntimeConfig.value.nullbr_app_id = data.nullbr_app_id || ''
-    savedRuntimeConfig.value.nullbr_api_key = data.nullbr_api_key || ''
-    savedRuntimeConfig.value.nullbr_base_url = data.nullbr_base_url || ''
-    savedRuntimeConfig.value.hdhive_cookie = data.hdhive_cookie || ''
-    savedRuntimeConfig.value.hdhive_base_url = data.hdhive_base_url || ''
-    savedRuntimeConfig.value.pansou_base_url = data.pansou_base_url || ''
-
     hdhiveForm.value.cookie = data.hdhive_cookie || ''
     nullbrForm.value.appId = data.nullbr_app_id || ''
     nullbrForm.value.apiKey = data.nullbr_api_key || ''
@@ -1275,6 +1302,7 @@ onMounted(() => {
     if (String(hdhiveForm.value.cookie || '').trim()) {
       checkHdhive(false)
     }
+    refreshSourceConnectionStatus()
   })
   fetchCookieInfo()
   checkCookie()
@@ -1481,6 +1509,10 @@ onMounted(() => {
     }
 
     .priority-tips {
+      margin-top: 8px;
+    }
+
+    .priority-actions-row {
       margin-top: 8px;
     }
   }
