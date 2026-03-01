@@ -273,6 +273,7 @@ class HDHiveService:
             joiner = "&" if "?" in resource_url else "?"
             full_url = f"{resource_url}{joiner}{urlencode({'password': access_code})}"
         locked = bool(lock_code == "400404" or ("解锁" in lock_message and not access_code))
+        suspected_invalid = cls._is_suspected_invalid_resource(lock_code, lock_message, full_url or resource_url)
 
         return {
             "locked": locked,
@@ -282,7 +283,27 @@ class HDHiveService:
             "resource_url": resource_url,
             "access_code": access_code,
             "full_url": full_url,
+            "suspected_invalid": suspected_invalid,
         }
+
+    @staticmethod
+    def _is_suspected_invalid_resource(lock_code: str, lock_message: str, candidate_url: str) -> bool:
+        code = str(lock_code or "").strip()
+        message = str(lock_message or "").strip().lower()
+        url = str(candidate_url or "").strip().lower()
+
+        invalid_codes = {"404", "4004040", "4100018", "4100008"}
+        if code in invalid_codes:
+            return True
+
+        invalid_tokens = ("失效", "无效", "不存在", "not found", "invalid", "expired", "已删除")
+        if any(token in message for token in invalid_tokens):
+            return True
+
+        # 一些站点返回了 URL，但明显不是 115 分享地址，视为疑似失效。
+        if url and ("115.com/s/" not in url and "115cdn.com/s/" not in url and "anxia.com/s/" not in url):
+            return True
+        return False
 
     async def _resolve_media_slug(self, tmdb_id: int, media_type: str) -> str:
         try:
@@ -489,6 +510,7 @@ class HDHiveService:
             "hdhive_lock_code": str(lock_meta.get("lock_code") or ""),
             "hdhive_lock_message": str(lock_meta.get("lock_message") or ""),
             "hdhive_resource_url": str(lock_meta.get("resource_url") or ""),
+            "hdhive_suspected_invalid": bool(lock_meta.get("suspected_invalid")),
             "source_service": "hdhive",
             "pan115_savable": savable,
         }

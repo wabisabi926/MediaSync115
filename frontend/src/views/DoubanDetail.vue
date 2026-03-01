@@ -121,7 +121,17 @@
                 <el-table v-if="hdhivePan115Resources.length" :data="hdhivePan115Resources" stripe class="resource-table">
                   <el-table-column label="资源名称" min-width="360" show-overflow-tooltip>
                     <template #default="{ row }">
-                      <div class="resource-name">{{ row.resource_name || row.title || row.name || '未命名资源' }}</div>
+                      <div class="resource-name-row">
+                        <div class="resource-name">{{ row.resource_name || row.title || row.name || '未命名资源' }}</div>
+                        <el-tag
+                          v-if="isHdhiveResourceSuspectedInvalid(row)"
+                          size="small"
+                          type="danger"
+                          effect="plain"
+                        >
+                          疑似失效
+                        </el-tag>
+                      </div>
                       <div
                         v-if="row.resource_name && row.title && row.resource_name !== row.title"
                         class="text-muted"
@@ -488,6 +498,15 @@ const isHdhiveResourceLocked = (row) => {
   if (row.hdhive_locked === true) return true
   const shareLink = resolvePan115ShareLink(row)
   return !shareLink && Number(row.unlock_points || 0) > 0
+}
+
+const isHdhiveResourceSuspectedInvalid = (row) => {
+  if (!row || row.source_service !== 'hdhive') return false
+  if (row.hdhive_suspected_invalid === true) return true
+  const lockMessage = String(row.hdhive_lock_message || '').toLowerCase()
+  const lockCode = String(row.hdhive_lock_code || '').trim()
+  if (['4100018', '4100008'].includes(lockCode)) return true
+  return ['失效', '无效', '不存在', 'invalid', 'expired', 'not found', '删除'].some((token) => lockMessage.includes(token))
 }
 
 const isPan115ActionDisabled = (row) => {
@@ -1393,6 +1412,12 @@ onBeforeUnmount(async () => {
 
   .resource-name {
     font-weight: 500;
+  }
+
+  .resource-name-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .resource-size {

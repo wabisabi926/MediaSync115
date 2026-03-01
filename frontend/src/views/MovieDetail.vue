@@ -102,7 +102,17 @@
                 >
                   <el-table-column label="资源名称" min-width="300" show-overflow-tooltip>
                     <template #default="{ row }">
-                      <span class="resource-name">{{ row.title }}</span>
+                      <div class="resource-name-row">
+                        <span class="resource-name">{{ row.title }}</span>
+                        <el-tag
+                          v-if="isHdhiveResourceSuspectedInvalid(row)"
+                          size="small"
+                          type="danger"
+                          effect="plain"
+                        >
+                          疑似失效
+                        </el-tag>
+                      </div>
                     </template>
                   </el-table-column>
                   <el-table-column label="画质" width="120" align="center">
@@ -471,6 +481,15 @@ const isHdhiveResourceLocked = (row) => {
   if (row.hdhive_locked === true) return true
   const shareLink = resolvePanShareLink(row)
   return !shareLink && Number(row.unlock_points || 0) > 0
+}
+
+const isHdhiveResourceSuspectedInvalid = (row) => {
+  if (!row || row.source_service !== 'hdhive') return false
+  if (row.hdhive_suspected_invalid === true) return true
+  const lockMessage = String(row.hdhive_lock_message || '').toLowerCase()
+  const lockCode = String(row.hdhive_lock_code || '').trim()
+  if (['4100018', '4100008'].includes(lockCode)) return true
+  return ['失效', '无效', '不存在', 'invalid', 'expired', 'not found', '删除'].some((token) => lockMessage.includes(token))
 }
 
 const isPan115ActionDisabled = (row) => {
@@ -1189,6 +1208,12 @@ onBeforeUnmount(() => {
     color: var(--ms-text-primary);
     font-size: 14px;
     font-weight: 500;
+  }
+
+  .resource-name-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .resource-size {
