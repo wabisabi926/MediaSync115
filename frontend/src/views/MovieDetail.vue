@@ -502,12 +502,15 @@ const showHdhiveNeedPointsNotice = async (row, reason = '') => {
   }
 }
 
-const ensureHdhiveShareLink = async (row, actionLabel = '转存') => {
+const ensureHdhiveShareLink = async (row, actionLabel = '转存', options = {}) => {
+  const forceUnlock = options?.forceUnlock === true
+  const reason = String(options?.reason || '').trim()
   const currentLink = resolvePanShareLink(row)
-  if (currentLink) return currentLink
-  if (!isHdhiveResourceLocked(row)) return currentLink
+  const locked = isHdhiveResourceLocked(row)
+  if (!forceUnlock && currentLink && !locked) return currentLink
+  if (!forceUnlock && !locked) return currentLink
 
-  const confirmed = await showHdhiveNeedPointsNotice(row)
+  const confirmed = await showHdhiveNeedPointsNotice(row, reason)
   if (!confirmed) return ''
 
   const slug = String(row?.slug || '').trim()
@@ -841,11 +844,31 @@ const handleSaveToPan115 = async (item) => {
       return
     }
     if (item?.source_service === 'hdhive' && (detail.includes('4100012') || detail.includes('请输入访问码'))) {
-      await ElMessageBox.alert(
-        '该 HDHive 资源仍需先支付积分解锁提取码后才能转存，请先在 HDHive 完成解锁。',
-        '需要积分解锁',
-        { type: 'warning' }
-      )
+      const unlockedLink = await ensureHdhiveShareLink(item, '转存', {
+        forceUnlock: true,
+        reason: '115 返回“请输入访问码”，需要先进行 HDHive 积分解锁。'
+      })
+      if (unlockedLink) {
+        try {
+          const { data } = await pan115Api.saveShareToFolder(
+            unlockedLink,
+            movie.value.title + ' (' + movie.value.release_date?.split('-')[0] + ')',
+            defaultFolderId,
+            ''
+          )
+          const retrySuccess = data?.success === true
+            || data?.state === true
+            || data?.result?.success === true
+            || data?.result?.state === true
+          if (!retrySuccess) throw new Error(data?.message || data?.error || data?.result?.error || '转存失败')
+          ElMessage.success(data?.message || '转存成功')
+          return
+        } catch (retryError) {
+          const retryDetail = String(retryError.response?.data?.detail || retryError.message || '').trim()
+          ElMessage.error(retryDetail || '转存失败')
+          return
+        }
+      }
       return
     }
     ElMessage.error(detail || error.message || '转存失败')
