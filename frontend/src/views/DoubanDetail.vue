@@ -54,9 +54,17 @@
                   <el-table-column label="大小" width="110" align="center">
                     <template #default="{ row }">{{ row.size || '-' }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="110" align="center" fixed="right">
+                  <el-table-column label="操作" width="180" align="center" fixed="right">
                     <template #default="{ row }">
                       <el-button type="primary" size="small" :loading="Boolean(row.saving)" @click="savePan115Resource(row)">转存</el-button>
+                      <el-button
+                        v-if="mediaType === 'tv'"
+                        size="small"
+                        :loading="Boolean(row.extracting)"
+                        @click="openSelectSaveDialog(row)"
+                      >
+                        选集
+                      </el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -85,9 +93,17 @@
                   <el-table-column label="大小" width="110" align="center">
                     <template #default="{ row }">{{ row.size || '-' }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="110" align="center" fixed="right">
+                  <el-table-column label="操作" width="180" align="center" fixed="right">
                     <template #default="{ row }">
                       <el-button type="primary" size="small" :loading="Boolean(row.saving)" @click="savePan115Resource(row)">转存</el-button>
+                      <el-button
+                        v-if="mediaType === 'tv'"
+                        size="small"
+                        :loading="Boolean(row.extracting)"
+                        @click="openSelectSaveDialog(row)"
+                      >
+                        选集
+                      </el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -164,6 +180,47 @@
         </el-tab-pane>
       </el-tabs>
     </template>
+
+    <el-dialog v-model="selectSaveDialogVisible" title="选集转存" width="700px">
+      <el-form :model="selectSaveForm" label-width="100px" style="margin-bottom: 20px;">
+        <el-form-item label="新建文件夹">
+          <el-input v-model="selectSaveForm.newFolderName" placeholder="可选，输入名称自动创建" />
+        </el-form-item>
+      </el-form>
+
+      <div v-loading="extractingFiles">
+        <el-table
+          :data="shareFilesList"
+          @selection-change="handleSelectionChange"
+          height="400"
+          style="width: 100%"
+          border
+        >
+          <el-table-column type="selection" width="55" />
+          <el-table-column prop="name" label="文件名称" show-overflow-tooltip />
+          <el-table-column prop="size" label="大小" width="120">
+            <template #default="{ row }">
+              {{ formatSize(row.size) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <div style="margin-top: 10px; color: var(--ms-text-muted); font-size: 13px;">
+          已自动过滤非视频文件，共选中 {{ selectedFiles.length }} 个文件
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="selectSaveDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="selectSaving"
+          :disabled="selectedFiles.length === 0 || extractingFiles"
+          @click="confirmSelectSave"
+        >
+          确认转存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -196,6 +253,17 @@ const seedhubMagnetLoading = ref(false)
 const seedhubMagnetTried = ref(false)
 const ed2kLoading = ref(false)
 const seedhubMagnetTaskId = ref('')
+const selectSaveDialogVisible = ref(false)
+const extractingFiles = ref(false)
+const selectSaving = ref(false)
+const shareFilesList = ref([])
+const selectedFiles = ref([])
+const selectSaveForm = ref({
+  shareLink: '',
+  receiveCode: '',
+  targetFolder: '0',
+  newFolderName: ''
+})
 let seedhubPollTimer = null
 
 const mediaType = computed(() => (String(route.params.mediaType || '').toLowerCase() === 'tv' ? 'tv' : 'movie'))
@@ -550,6 +618,12 @@ const getDefaultTransferFolderId = async () => {
   }
 }
 
+const isVideoFile = (filename) => {
+  const value = String(filename || '').trim()
+  if (!value) return false
+  return /\.(mp4|mkv|avi|rmvb|flv|ts|mov|wmv|m4v)$/i.test(value)
+}
+
 const savePan115Resource = async (row) => {
   const shareLink = resolvePan115ShareLink(row)
   if (!shareLink) {
@@ -575,6 +649,83 @@ const savePan115Resource = async (row) => {
     ElMessage.error(error.response?.data?.detail || error.message || '转存失败')
   } finally {
     row.saving = false
+  }
+}
+
+const openSelectSaveDialog = async (row) => {
+  const shareLink = resolvePan115ShareLink(row)
+  if (!shareLink) {
+    ElMessage.warning('资源缺少分享链接')
+    return
+  }
+  if (mediaType.value !== 'tv') {
+    ElMessage.warning('仅剧集资源支持选集转存')
+    return
+  }
+
+  row.extracting = true
+  extractingFiles.value = true
+  shareFilesList.value = []
+  selectedFiles.value = []
+  selectSaveDialogVisible.value = true
+
+  try {
+    const folderId = await getDefaultTransferFolderId()
+    const folderName = detail.value?.title || '豆瓣剧集'
+    const receiveCode = parseReceiveCodeFromShareLink(shareLink)
+    selectSaveForm.value = {
+      shareLink,
+      receiveCode,
+      targetFolder: folderId,
+      newFolderName: folderName
+    }
+
+    const { data } = await pan115Api.extractShareFiles(shareLink, receiveCode)
+    const allFiles = Array.isArray(data?.list) ? data.list : []
+    shareFilesList.value = allFiles.filter((item) => isVideoFile(item?.name))
+    if (shareFilesList.value.length === 0) {
+      ElMessage.info('未找到可选的视频文件')
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || '提取文件列表失败')
+  } finally {
+    row.extracting = false
+    extractingFiles.value = false
+  }
+}
+
+const handleSelectionChange = (rows) => {
+  const list = Array.isArray(rows) ? rows : []
+  selectedFiles.value = list
+    .map((item) => String(item?.fid || '').trim())
+    .filter(Boolean)
+}
+
+const confirmSelectSave = async () => {
+  if (selectedFiles.value.length === 0) {
+    ElMessage.warning('请先选择要转存的文件')
+    return
+  }
+
+  selectSaving.value = true
+  try {
+    const { data } = await pan115Api.saveShareFilesToFolder(
+      selectSaveForm.value.shareLink,
+      selectedFiles.value,
+      selectSaveForm.value.newFolderName || (detail.value?.title || '豆瓣剧集'),
+      selectSaveForm.value.targetFolder,
+      selectSaveForm.value.receiveCode
+    )
+    const success = data?.success === true || data?.state === true || data?.result?.success === true || data?.result?.state === true
+    if (!success) {
+      throw new Error(data?.message || data?.error || data?.result?.error || '转存失败')
+    }
+    ElMessage.success(data?.message || `成功转存 ${selectedFiles.value.length} 个文件`)
+    selectSaveDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || '转存失败')
+  } finally {
+    selectSaving.value = false
   }
 }
 
@@ -673,6 +824,11 @@ const resetResources = () => {
   seedhubMagnetLoading.value = false
   seedhubMagnetTried.value = false
   ed2kLoading.value = false
+  selectSaveDialogVisible.value = false
+  extractingFiles.value = false
+  selectSaving.value = false
+  shareFilesList.value = []
+  selectedFiles.value = []
 }
 
 const handleRematchTmdb = async () => {
