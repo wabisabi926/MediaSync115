@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from app.services.douban_explore_service import (
     DOUBAN_SECTION_SOURCES,
@@ -90,6 +91,10 @@ _pan115_share_code_hint_pattern = re.compile(
     r"(?:分享码|分享碼|share(?:_|\s*)code)\s*[:：=]?\s*([A-Za-z0-9]{6,32})",
     re.IGNORECASE,
 )
+
+
+class HDHiveUnlockRequest(BaseModel):
+    slug: str
 
 
 def _extract_search_items(payload: Any) -> list[dict]:
@@ -1575,6 +1580,22 @@ async def get_tv_pan115_with_hdhive(tmdb_id: int, page: int = Query(1, ge=1)):
     )
     _set_cached_payload(_tv_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
     return result
+
+
+@router.post("/hdhive/resource/unlock")
+async def unlock_hdhive_resource(payload: HDHiveUnlockRequest):
+    slug = str(payload.slug or "").strip()
+    if not slug:
+        raise HTTPException(status_code=400, detail="资源 slug 不能为空")
+
+    try:
+        result = await hdhive_service.unlock_resource(slug)
+        return result
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
+        raise HTTPException(status_code=502, detail=f"HDHive 解锁失败({status})")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"HDHive 解锁失败: {str(exc)}")
 
 
 @router.get("/tv/{tmdb_id}/season/{season_number}")

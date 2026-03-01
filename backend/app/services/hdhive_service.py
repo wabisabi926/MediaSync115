@@ -3,6 +3,7 @@ import json
 import re
 from typing import Any
 from urllib.parse import unquote, urlencode
+from time import monotonic
 
 import httpx
 
@@ -22,6 +23,10 @@ class HDHiveService:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         )
+        self._unlock_action_id = "40dbca7ab6f555dbd98c40945c8b970185c58e16d3"
+        self._unlock_locks: dict[str, asyncio.Lock] = {}
+        self._unlock_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._unlock_cache_ttl_seconds = 120.0
 
     def set_base_url(self, base_url: str | None) -> None:
         value = str(base_url or "").strip()
@@ -217,6 +222,67 @@ class HDHiveService:
         joiner = "&" if "?" in share_url else "?"
         return f"{share_url}{joiner}{urlencode({'password': access_code})}"
 
+    @staticmethod
+    def _extract_resource_payload(raw: str) -> dict[str, Any]:
+        marker = '\\"slug\\":\\"'
+        index = raw.find(marker)
+        if index < 0:
+            return {}
+
+        tail = raw[max(0, index - 2000):]
+        for pattern in (
+            r'\\"slug\\":\\"[^\\"]+\\".*?\\"data\\":(\{.*?\}),\\"error\\":(\{.*?\}),\\"poster\\":',
+            r'\\"slug\\":\\"[^\\"]+\\".*?\\"data\\":(\{.*?\}),\\"error\\":null,\\"poster\\":',
+        ):
+            match = re.search(pattern, tail, re.S)
+            if not match:
+                continue
+            data_raw = match.group(1)
+            error_raw = match.group(2) if match.lastindex and match.lastindex >= 2 else "null"
+            try:
+                data_obj = json.loads(data_raw.replace('\\"', '"').replace("\\/", "/"))
+            except Exception:
+                data_obj = {}
+            try:
+                error_obj = json.loads(error_raw.replace('\\"', '"').replace("\\/", "/")) if error_raw else {}
+            except Exception:
+                error_obj = {}
+            return {
+                "data": data_obj if isinstance(data_obj, dict) else {},
+                "error": error_obj if isinstance(error_obj, dict) else {},
+            }
+        return {}
+
+    @classmethod
+    def _extract_resource_meta(cls, raw: str) -> dict[str, Any]:
+        payload = cls._extract_resource_payload(raw)
+        data_obj = payload.get("data") if isinstance(payload, dict) else {}
+        error_obj = payload.get("error") if isinstance(payload, dict) else {}
+
+        data_obj = data_obj if isinstance(data_obj, dict) else {}
+        error_obj = error_obj if isinstance(error_obj, dict) else {}
+
+        lock_code = str(error_obj.get("code") or "").strip()
+        lock_message = str(error_obj.get("message") or "").strip()
+        unlock_points = int(data_obj.get("unlock_points") or 0)
+        access_code = str(data_obj.get("access_code") or "").strip()
+        resource_url = str(data_obj.get("url") or "").strip()
+        full_url = str(data_obj.get("full_url") or "").strip()
+        if not full_url and resource_url and access_code:
+            joiner = "&" if "?" in resource_url else "?"
+            full_url = f"{resource_url}{joiner}{urlencode({'password': access_code})}"
+        locked = bool(lock_code == "400404" or ("解锁" in lock_message and not access_code))
+
+        return {
+            "locked": locked,
+            "lock_code": lock_code,
+            "lock_message": lock_message,
+            "unlock_points": unlock_points,
+            "resource_url": resource_url,
+            "access_code": access_code,
+            "full_url": full_url,
+        }
+
     async def _resolve_media_slug(self, tmdb_id: int, media_type: str) -> str:
         try:
             tmdb_route_html = await self._fetch_text(f"/tmdb/{media_type}/{int(tmdb_id)}")
@@ -249,6 +315,123 @@ class HDHiveService:
         html = await self._fetch_text(f"/resource/115/{slug}")
         return self._extract_share_link(html)
 
+    async def _fetch_resource_meta(self, slug: str) -> dict[str, Any]:
+        slug = str(slug or "").strip()
+        if not slug:
+            return {}
+        html = await self._fetch_text(f"/resource/115/{slug}")
+        meta = self._extract_resource_meta(html)
+        share_link = self._extract_share_link(html)
+        if share_link and not meta.get("full_url"):
+            meta["full_url"] = share_link
+        return meta
+
+    @staticmethod
+    def _parse_next_action_response(text: str) -> dict[str, Any]:
+        if not text:
+            return {"success": False, "message": "空响应"}
+
+        payload_line = ""
+        for line in text.splitlines():
+            if line.startswith("1:"):
+                payload_line = line[2:].strip()
+                break
+        if not payload_line:
+            return {"success": False, "message": "未获取到响应数据"}
+
+        try:
+            payload = json.loads(payload_line)
+        except Exception as exc:
+            return {"success": False, "message": f"解析响应失败: {exc}"}
+
+        if not isinstance(payload, dict):
+            return {"success": False, "message": "响应格式异常"}
+
+        if isinstance(payload.get("response"), dict):
+            response_obj = payload["response"]
+            return {
+                "success": bool(response_obj.get("success")),
+                "code": str(response_obj.get("code") or ""),
+                "message": str(response_obj.get("message") or ""),
+                "data": response_obj.get("data") if isinstance(response_obj.get("data"), dict) else {},
+            }
+        if isinstance(payload.get("error"), dict):
+            error_obj = payload["error"]
+            return {
+                "success": False,
+                "code": str(error_obj.get("code") or ""),
+                "message": str(error_obj.get("message") or error_obj.get("description") or "解锁失败"),
+                "data": error_obj.get("data") if isinstance(error_obj.get("data"), dict) else {},
+            }
+        if isinstance(payload.get("digest"), str):
+            return {"success": False, "message": f"解锁请求失败(digest={payload['digest']})"}
+        return {"success": False, "message": "解锁请求未返回有效结果"}
+
+    async def _unlock_resource_via_next_action(self, slug: str) -> dict[str, Any]:
+        slug = str(slug or "").strip()
+        if not slug:
+            return {"success": False, "message": "资源 slug 为空"}
+
+        resource_url = f"{self._base_url}/resource/115/{slug}"
+        headers = {
+            "user-agent": self._user_agent,
+            "accept": "text/x-component",
+            "origin": self._base_url,
+            "referer": resource_url,
+            "next-action": self._unlock_action_id,
+            "content-type": "text/plain;charset=UTF-8",
+        }
+        if self._cookie:
+            headers["cookie"] = self._cookie
+
+        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
+            response = await client.post(resource_url, headers=headers, content=json.dumps([slug]))
+            response.raise_for_status()
+            parsed = self._parse_next_action_response(response.text)
+            parsed["raw"] = response.text[:2000]
+            return parsed
+
+    async def unlock_resource(self, slug: str) -> dict[str, Any]:
+        slug = str(slug or "").strip()
+        if not slug:
+            return {"success": False, "message": "资源 slug 为空", "locked": True}
+
+        cached = self._unlock_cache.get(slug)
+        now = monotonic()
+        if cached and (now - cached[0] < self._unlock_cache_ttl_seconds):
+            return cached[1]
+
+        lock = self._unlock_locks.setdefault(slug, asyncio.Lock())
+        async with lock:
+            cached = self._unlock_cache.get(slug)
+            now = monotonic()
+            if cached and (now - cached[0] < self._unlock_cache_ttl_seconds):
+                return cached[1]
+
+            action_result = await self._unlock_resource_via_next_action(slug)
+            meta = await self._fetch_resource_meta(slug)
+            access_code = str(meta.get("access_code") or "").strip()
+            share_link = str(meta.get("full_url") or "").strip()
+            success = bool(action_result.get("success")) and bool(share_link or access_code)
+
+            result = {
+                "success": success,
+                "method": "next_action",
+                "message": (
+                    str(action_result.get("message") or "").strip()
+                    or ("资源解锁成功" if success else "资源解锁失败")
+                ),
+                "share_link": share_link,
+                "access_code": access_code,
+                "locked": bool(meta.get("locked")),
+                "lock_code": str(meta.get("lock_code") or ""),
+                "lock_message": str(meta.get("lock_message") or ""),
+                "unlock_points": int(meta.get("unlock_points") or 0),
+                "resource_url": str(meta.get("resource_url") or ""),
+            }
+            self._unlock_cache[slug] = (monotonic(), result)
+            return result
+
     async def _build_pan115_rows(self, tmdb_id: int, media_type: str) -> list[dict[str, Any]]:
         slug = await self._resolve_media_slug(tmdb_id, media_type)
         detail_path = f"/{media_type}/{slug}" if not slug.isdigit() else f"/{media_type}/{int(tmdb_id)}"
@@ -266,11 +449,14 @@ class HDHiveService:
             resource_slug = str(row.get("slug") or "").strip()
             unlock_points = int(row.get("unlock_points") or 0)
             share_link = ""
+            lock_meta: dict[str, Any] = {}
             if resource_slug:
                 try:
-                    share_link = await self._fetch_resource_share_link(resource_slug)
+                    lock_meta = await self._fetch_resource_meta(resource_slug)
+                    share_link = str(lock_meta.get("full_url") or "").strip()
                 except Exception:
                     share_link = ""
+                    lock_meta = {}
 
             title = str(row.get("title") or "").strip() or f"HDHive 资源 #{index + 1}"
             resource_name = (
@@ -295,6 +481,10 @@ class HDHiveService:
                 "resolution": resolution,
                 "share_link": share_link,
                 "unlock_points": unlock_points,
+                "hdhive_locked": bool(lock_meta.get("locked")),
+                "hdhive_lock_code": str(lock_meta.get("lock_code") or ""),
+                "hdhive_lock_message": str(lock_meta.get("lock_message") or ""),
+                "hdhive_resource_url": str(lock_meta.get("resource_url") or ""),
                 "source_service": "hdhive",
                 "pan115_savable": savable,
             }
