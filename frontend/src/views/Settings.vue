@@ -527,6 +527,14 @@ const sourceLabelMap = {
   pansou: 'Pansou',
 }
 const resourcePriority = ref(['nullbr', 'hdhive', 'pansou'])
+const savedRuntimeConfig = ref({
+  nullbr_app_id: '',
+  nullbr_api_key: '',
+  nullbr_base_url: '',
+  hdhive_cookie: '',
+  hdhive_base_url: '',
+  pansou_base_url: ''
+})
 
 const pansouForm = ref({
   baseUrl: ''
@@ -607,17 +615,24 @@ const riskHealthAlertType = computed(() => {
 })
 
 const sourceConfigStatus = computed(() => {
+  const nullbrAppId = String(savedRuntimeConfig.value.nullbr_app_id || '').trim()
+  const nullbrApiKey = String(savedRuntimeConfig.value.nullbr_api_key || '').trim()
+  const nullbrBaseUrl = String(savedRuntimeConfig.value.nullbr_base_url || '').trim()
+  const hdhiveCookie = String(savedRuntimeConfig.value.hdhive_cookie || '').trim()
+  const hdhiveBaseUrl = String(savedRuntimeConfig.value.hdhive_base_url || '').trim()
+  const pansouBaseUrl = String(savedRuntimeConfig.value.pansou_base_url || '').trim()
+
   const nullbrOk = Boolean(
-    String(nullbrForm.value.appId || '').trim() &&
-    String(nullbrForm.value.apiKey || '').trim() &&
-    String(nullbrForm.value.baseUrl || '').trim()
+    nullbrAppId &&
+    nullbrApiKey &&
+    nullbrBaseUrl
   )
-  const hdhiveOk = Boolean(String(hdhiveForm.value.cookie || '').trim())
-  const pansouOk = Boolean(String(pansouForm.value.baseUrl || '').trim())
+  const hdhiveOk = Boolean(hdhiveCookie && hdhiveBaseUrl)
+  const pansouOk = Boolean(pansouBaseUrl)
   return {
-    nullbr: { ok: nullbrOk, text: nullbrOk ? '配置完整' : '缺少配置' },
-    hdhive: { ok: hdhiveOk, text: hdhiveOk ? '配置完整' : '缺少 Cookie' },
-    pansou: { ok: pansouOk, text: pansouOk ? '配置完整' : '缺少地址' },
+    nullbr: { ok: nullbrOk, text: nullbrOk ? '已保存配置' : '缺少配置' },
+    hdhive: { ok: hdhiveOk, text: hdhiveOk ? '已保存配置' : '缺少 Cookie/地址' },
+    pansou: { ok: pansouOk, text: pansouOk ? '已保存配置' : '缺少地址' },
   }
 })
 
@@ -796,6 +811,7 @@ const fetchPansouConfig = async () => {
   try {
     const { data } = await pansouApi.getConfig()
     pansouForm.value.baseUrl = data.base_url || ''
+    savedRuntimeConfig.value.pansou_base_url = data.base_url || ''
     pansouHealthStatus.value = data.health?.status || ''
   } catch (error) {
     console.error('Failed to fetch pansou config:', error)
@@ -812,6 +828,7 @@ const handleSavePansouConfig = async () => {
   try {
     const { data } = await pansouApi.updateConfig(pansouForm.value.baseUrl)
     pansouForm.value.baseUrl = data.base_url || pansouForm.value.baseUrl
+    savedRuntimeConfig.value.pansou_base_url = pansouForm.value.baseUrl
     pansouHealthStatus.value = data.health?.status || ''
     ElMessage.success('Pansou 配置已保存')
   } catch (error) {
@@ -839,7 +856,7 @@ const handleTestPansou = async () => {
   }
 }
 
-const handleSaveNullbr = () => {
+const handleSaveNullbr = async () => {
   if (!String(nullbrForm.value.appId || '').trim()) {
     ElMessage.warning('请输入 Nullbr APP ID')
     return
@@ -854,17 +871,19 @@ const handleSaveNullbr = () => {
   }
 
   savingNullbr.value = true
-  settingsApi.updateRuntime({
-    nullbr_app_id: nullbrForm.value.appId,
-    nullbr_api_key: nullbrForm.value.apiKey,
-    nullbr_base_url: nullbrForm.value.baseUrl
-  }).then(() => {
+  try {
+    await settingsApi.updateRuntime({
+      nullbr_app_id: nullbrForm.value.appId,
+      nullbr_api_key: nullbrForm.value.apiKey,
+      nullbr_base_url: nullbrForm.value.baseUrl
+    })
+    await fetchRuntimeSettings()
     ElMessage.success('Nullbr 配置已保存')
-  }).catch((error) => {
+  } catch (error) {
     ElMessage.error(error.response?.data?.detail || 'Nullbr 配置保存失败')
-  }).finally(() => {
+  } finally {
     savingNullbr.value = false
-  })
+  }
 }
 
 const checkHdhive = async (notify = false) => {
@@ -906,6 +925,7 @@ const handleSaveHdhive = async () => {
     await settingsApi.updateRuntime({
       hdhive_cookie: hdhiveForm.value.cookie
     })
+    await fetchRuntimeSettings()
     ElMessage.success('HDHive Cookie 已保存')
     await checkHdhive(false)
   } catch (error) {
@@ -982,6 +1002,13 @@ const handleSaveTmdb = () => {
 const fetchRuntimeSettings = async () => {
   try {
     const { data } = await settingsApi.getRuntime()
+    savedRuntimeConfig.value.nullbr_app_id = data.nullbr_app_id || ''
+    savedRuntimeConfig.value.nullbr_api_key = data.nullbr_api_key || ''
+    savedRuntimeConfig.value.nullbr_base_url = data.nullbr_base_url || ''
+    savedRuntimeConfig.value.hdhive_cookie = data.hdhive_cookie || ''
+    savedRuntimeConfig.value.hdhive_base_url = data.hdhive_base_url || ''
+    savedRuntimeConfig.value.pansou_base_url = data.pansou_base_url || ''
+
     hdhiveForm.value.cookie = data.hdhive_cookie || ''
     nullbrForm.value.appId = data.nullbr_app_id || ''
     nullbrForm.value.apiKey = data.nullbr_api_key || ''
