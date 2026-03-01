@@ -1,13 +1,9 @@
-import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.runtime_settings_service import runtime_settings_service
-from app.services.hdhive_service import hdhive_service
-from app.services.nullbr_service import nullbr_service
-from app.services.pansou_service import pansou_service
 from app.services.subscription_scheduler_service import subscription_scheduler_service
 
 
@@ -64,33 +60,15 @@ async def _validate_priority_source_config(merged_settings: dict) -> None:
             base_url = str(merged_settings.get("nullbr_base_url") or "").strip()
             if not app_id or not api_key or not base_url:
                 errors.append("Nullbr 优先级已启用，但缺少 APP ID / API Key / Base URL 配置")
-                continue
-            try:
-                await asyncio.to_thread(nullbr_service.get_user_info)
-            except Exception as exc:
-                errors.append(f"Nullbr 连通性检测失败: {str(exc)[:200]}")
         elif source == "hdhive":
             cookie = str(merged_settings.get("hdhive_cookie") or "").strip()
             base_url = str(merged_settings.get("hdhive_base_url") or "").strip()
             if not cookie or not base_url:
                 errors.append("HDHive 优先级已启用，但缺少 Cookie 或 Base URL 配置")
-                continue
-            try:
-                await hdhive_service.get_user_info()
-            except Exception as exc:
-                errors.append(f"HDHive 连通性检测失败: {str(exc)[:200]}")
         elif source == "pansou":
             base_url = str(merged_settings.get("pansou_base_url") or "").strip()
             if not base_url:
                 errors.append("Pansou 优先级已启用，但缺少服务地址配置")
-                continue
-            try:
-                health = await pansou_service.health_check()
-                status = str(health.get("status") or "")
-                if status != "healthy":
-                    errors.append(f"Pansou 连通性检测失败: {status or 'unknown'}")
-            except Exception as exc:
-                errors.append(f"Pansou 连通性检测失败: {str(exc)[:200]}")
 
     if errors:
         raise HTTPException(status_code=400, detail="；".join(errors))
