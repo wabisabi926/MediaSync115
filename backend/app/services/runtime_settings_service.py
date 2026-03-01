@@ -36,6 +36,10 @@ class RuntimeSettingsService:
             "subscription_pansou_interval_hours": 24,
             "subscription_pansou_run_time": "03:30",
             "subscription_resource_priority": ["nullbr", "hdhive", "pansou"],
+            "subscription_hdhive_auto_unlock_enabled": False,
+            "subscription_hdhive_unlock_max_points_per_item": 10,
+            "subscription_hdhive_unlock_budget_points_per_run": 30,
+            "subscription_hdhive_unlock_threshold_inclusive": True,
         }
         self._data = dict(self._defaults)
         self._load()
@@ -206,6 +210,26 @@ class RuntimeSettingsService:
             return normalized
         return list(self._defaults["subscription_resource_priority"])
 
+    def get_subscription_hdhive_auto_unlock_enabled(self) -> bool:
+        return bool(self._data.get("subscription_hdhive_auto_unlock_enabled", False))
+
+    def get_subscription_hdhive_unlock_max_points_per_item(self) -> int:
+        value = self._data.get("subscription_hdhive_unlock_max_points_per_item", 10)
+        try:
+            return max(1, int(value))
+        except Exception:
+            return 10
+
+    def get_subscription_hdhive_unlock_budget_points_per_run(self) -> int:
+        value = self._data.get("subscription_hdhive_unlock_budget_points_per_run", 30)
+        try:
+            return max(1, int(value))
+        except Exception:
+            return 30
+
+    def get_subscription_hdhive_unlock_threshold_inclusive(self) -> bool:
+        return bool(self._data.get("subscription_hdhive_unlock_threshold_inclusive", True))
+
     def update_bulk(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("配置数据格式无效")
@@ -315,6 +339,10 @@ class RuntimeSettingsService:
             "subscription_pansou_interval_hours": int(self._data.get("subscription_pansou_interval_hours", 24) or 24),
             "subscription_pansou_run_time": str(self._data.get("subscription_pansou_run_time", "03:30") or "03:30"),
             "subscription_resource_priority": self.get_subscription_resource_priority(),
+            "subscription_hdhive_auto_unlock_enabled": self.get_subscription_hdhive_auto_unlock_enabled(),
+            "subscription_hdhive_unlock_max_points_per_item": self.get_subscription_hdhive_unlock_max_points_per_item(),
+            "subscription_hdhive_unlock_budget_points_per_run": self.get_subscription_hdhive_unlock_budget_points_per_run(),
+            "subscription_hdhive_unlock_threshold_inclusive": self.get_subscription_hdhive_unlock_threshold_inclusive(),
         }
 
 

@@ -53,9 +53,15 @@ class SubscriptionService:
             "auto_retry_failed_count": 0,
             "resource_checked_count": 0,
             "resource_duplicate_count": 0,
+            "hdhive_unlock_attempted_count": 0,
+            "hdhive_unlock_success_count": 0,
+            "hdhive_unlock_failed_count": 0,
+            "hdhive_unlock_skipped_count": 0,
+            "hdhive_unlock_points_spent": 0,
             "errors": [],
             "started_at": started_at.isoformat(),
         }
+        hdhive_unlock_context = self._build_hdhive_unlock_context()
 
         subs_result = await db.execute(
             select(
@@ -121,7 +127,7 @@ class SubscriptionService:
                     status="info",
                     message="开始处理订阅",
                 )
-                resources, fetch_trace = await self._fetch_resources(normalized_channel, sub)
+                resources, fetch_trace = await self._fetch_resources(normalized_channel, sub, hdhive_unlock_context)
                 for trace in fetch_trace:
                     await self._create_step_log(
                         db,
@@ -352,6 +358,12 @@ class SubscriptionService:
             result["checked_count"],
             result["auto_failed_count"],
         )
+        unlock_stats = hdhive_unlock_context.get("stats", {})
+        result["hdhive_unlock_attempted_count"] = int(unlock_stats.get("attempted") or 0)
+        result["hdhive_unlock_success_count"] = int(unlock_stats.get("success") or 0)
+        result["hdhive_unlock_failed_count"] = int(unlock_stats.get("failed") or 0)
+        result["hdhive_unlock_skipped_count"] = int(unlock_stats.get("skipped") or 0)
+        result["hdhive_unlock_points_spent"] = int(unlock_stats.get("points_spent") or 0)
         message = self._build_message(result)
         finished_at = datetime.utcnow()
         result["finished_at"] = finished_at.isoformat()
@@ -385,6 +397,11 @@ class SubscriptionService:
                 "auto_saved_count": result["auto_saved_count"],
                 "auto_failed_count": result["auto_failed_count"],
                 "failed_count": result["failed_count"],
+                "hdhive_unlock_attempted_count": result["hdhive_unlock_attempted_count"],
+                "hdhive_unlock_success_count": result["hdhive_unlock_success_count"],
+                "hdhive_unlock_failed_count": result["hdhive_unlock_failed_count"],
+                "hdhive_unlock_skipped_count": result["hdhive_unlock_skipped_count"],
+                "hdhive_unlock_points_spent": result["hdhive_unlock_points_spent"],
             },
         )
         await self._prune_step_logs(db)
@@ -431,6 +448,7 @@ class SubscriptionService:
         self,
         channel: str,
         sub: "SubscriptionSnapshot",
+        hdhive_unlock_context: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         traces: list[dict[str, Any]] = []
         source_order = self._resolve_source_order(channel)
@@ -473,6 +491,12 @@ class SubscriptionService:
                         "payload": {"source": source, "count": len(source_resources)},
                     }
                 )
+                if source == "hdhive":
+                    source_resources = await self._prepare_hdhive_locked_resources(
+                        source_resources,
+                        hdhive_unlock_context or self._build_hdhive_unlock_context(),
+                        traces,
+                    )
                 return source_resources, traces
 
         traces.append(
@@ -671,6 +695,280 @@ class SubscriptionService:
         if media_type == MediaType.TV:
             return await asyncio.to_thread(nullbr_service.get_tv_pan115, tmdb_id, 1)
         return await asyncio.to_thread(nullbr_service.get_movie_pan115, tmdb_id, 1)
+
+    def _build_hdhive_unlock_context(self) -> dict[str, Any]:
+        budget_total = runtime_settings_service.get_subscription_hdhive_unlock_budget_points_per_run()
+        return {
+            "enabled": runtime_settings_service.get_subscription_hdhive_auto_unlock_enabled(),
+            "max_points_per_item": runtime_settings_service.get_subscription_hdhive_unlock_max_points_per_item(),
+            "budget_total": budget_total,
+            "budget_left": budget_total,
+            "threshold_inclusive": runtime_settings_service.get_subscription_hdhive_unlock_threshold_inclusive(),
+            "consecutive_failed_limit": 3,
+            "consecutive_failed_count": 0,
+            "request_interval_seconds": 0.35,
+            "stopped_by_circuit": False,
+            "stopped_reason": "",
+            "stats": {
+                "attempted": 0,
+                "success": 0,
+                "failed": 0,
+                "skipped": 0,
+                "points_spent": 0,
+            },
+        }
+
+    async def _prepare_hdhive_locked_resources(
+        self,
+        resources: list[dict[str, Any]],
+        context: dict[str, Any],
+        traces: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        normalized_items = self._normalize_hdhive_subscription_items(resources)
+        if not normalized_items:
+            return normalized_items
+
+        enabled = bool(context.get("enabled", False))
+        max_points = int(context.get("max_points_per_item", 10) or 10)
+        budget_total = int(context.get("budget_total", 30) or 30)
+        budget_left = int(context.get("budget_left", budget_total) or budget_total)
+        threshold_inclusive = bool(context.get("threshold_inclusive", True))
+        traces.append(
+            {
+                "step": "hdhive_unlock_policy",
+                "status": "info",
+                "message": (
+                    "HDHive 解锁策略已加载"
+                    if enabled
+                    else "HDHive 自动积分解锁未启用，锁定资源将跳过自动解锁"
+                ),
+                "payload": {
+                    "enabled": enabled,
+                    "max_points_per_item": max_points,
+                    "budget_total": budget_total,
+                    "budget_left": budget_left,
+                    "threshold_inclusive": threshold_inclusive,
+                },
+            }
+        )
+
+        stats = context.setdefault(
+            "stats",
+            {"attempted": 0, "success": 0, "failed": 0, "skipped": 0, "points_spent": 0},
+        )
+        local_attempted = 0
+        local_success = 0
+        local_failed = 0
+        local_skipped = 0
+        local_points_spent = 0
+        for item in normalized_items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("source_service") or "").strip().lower() != "hdhive":
+                continue
+
+            if self._extract_resource_url(item):
+                continue
+
+            slug = str(item.get("slug") or "").strip()
+            unlock_points = self._safe_int(item.get("unlock_points"), default=0)
+            locked = bool(item.get("hdhive_locked")) or (unlock_points > 0 and not self._extract_resource_url(item))
+            if not locked:
+                continue
+
+            skip_reason = ""
+            if not enabled:
+                skip_reason = "disabled"
+            elif not slug:
+                skip_reason = "missing_slug"
+            elif unlock_points <= 0:
+                skip_reason = "invalid_unlock_points"
+            elif not self._allow_unlock_by_threshold(unlock_points, max_points, threshold_inclusive):
+                skip_reason = "over_threshold"
+            elif context.get("stopped_by_circuit"):
+                skip_reason = "circuit_open"
+            elif unlock_points > int(context.get("budget_left", 0) or 0):
+                skip_reason = "budget_exceeded"
+
+            if skip_reason:
+                local_skipped += 1
+                stats["skipped"] = int(stats.get("skipped") or 0) + 1
+                traces.append(
+                    {
+                        "step": "hdhive_unlock_item_skip",
+                        "status": "warning",
+                        "message": f"跳过资源解锁: {slug or 'unknown'} ({skip_reason})",
+                        "payload": {
+                            "slug": slug,
+                            "unlock_points": unlock_points,
+                            "reason": skip_reason,
+                            "budget_left": int(context.get("budget_left", 0) or 0),
+                        },
+                    }
+                )
+                continue
+
+            traces.append(
+                {
+                    "step": "hdhive_unlock_item_start",
+                    "status": "info",
+                    "message": f"开始自动解锁资源: {slug}",
+                    "payload": {
+                        "slug": slug,
+                        "unlock_points": unlock_points,
+                        "budget_remaining_before": int(context.get("budget_left", 0) or 0),
+                    },
+                }
+            )
+
+            stats["attempted"] = int(stats.get("attempted") or 0) + 1
+            local_attempted += 1
+            try:
+                unlock_result = await hdhive_service.unlock_resource(slug)
+                unlock_message = str(unlock_result.get("message") or "").strip()
+                share_link = self._normalize_share_url(str(unlock_result.get("share_link") or "").strip())
+                if share_link:
+                    item["pan115_share_link"] = share_link
+                    item["share_link"] = share_link
+                    item["pan115_savable"] = True
+                    context["budget_left"] = max(0, int(context.get("budget_left", 0) or 0) - unlock_points)
+                    context["consecutive_failed_count"] = 0
+                    stats["success"] = int(stats.get("success") or 0) + 1
+                    stats["points_spent"] = int(stats.get("points_spent") or 0) + unlock_points
+                    local_success += 1
+                    local_points_spent += unlock_points
+                    traces.append(
+                        {
+                            "step": "hdhive_unlock_item_done",
+                            "status": "success",
+                            "message": f"资源解锁成功: {slug}",
+                            "payload": {
+                                "slug": slug,
+                                "unlock_points": unlock_points,
+                                "budget_remaining_after": int(context.get("budget_left", 0) or 0),
+                            },
+                        }
+                    )
+                else:
+                    context["consecutive_failed_count"] = int(context.get("consecutive_failed_count", 0) or 0) + 1
+                    stats["failed"] = int(stats.get("failed") or 0) + 1
+                    local_failed += 1
+                    traces.append(
+                        {
+                            "step": "hdhive_unlock_item_failed",
+                            "status": "failed",
+                            "message": f"资源解锁失败: {slug}",
+                            "payload": {
+                                "slug": slug,
+                                "unlock_points": unlock_points,
+                                "error": unlock_message or "解锁后未获取可转存链接",
+                            },
+                        }
+                    )
+                    if self._should_stop_unlocking_on_message(unlock_message):
+                        context["stopped_by_circuit"] = True
+                        context["stopped_reason"] = unlock_message or "unlock_error"
+            except Exception as exc:
+                context["consecutive_failed_count"] = int(context.get("consecutive_failed_count", 0) or 0) + 1
+                stats["failed"] = int(stats.get("failed") or 0) + 1
+                local_failed += 1
+                message = str(exc)[:300]
+                traces.append(
+                    {
+                        "step": "hdhive_unlock_item_failed",
+                        "status": "failed",
+                        "message": f"资源解锁失败: {slug}",
+                        "payload": {
+                            "slug": slug,
+                            "unlock_points": unlock_points,
+                            "error": message,
+                        },
+                    }
+                )
+                if self._should_stop_unlocking_on_message(message):
+                    context["stopped_by_circuit"] = True
+                    context["stopped_reason"] = message
+
+            failed_count = int(context.get("consecutive_failed_count", 0) or 0)
+            if failed_count >= int(context.get("consecutive_failed_limit", 3) or 3):
+                context["stopped_by_circuit"] = True
+                if not str(context.get("stopped_reason") or "").strip():
+                    context["stopped_reason"] = f"连续失败 {failed_count} 次"
+
+            if context.get("stopped_by_circuit"):
+                traces.append(
+                    {
+                        "step": "hdhive_unlock_stop",
+                        "status": "warning",
+                        "message": "触发 HDHive 解锁熔断，本订阅剩余锁定资源停止自动解锁",
+                        "payload": {
+                            "reason": str(context.get("stopped_reason") or "unknown"),
+                            "consecutive_failed_count": int(context.get("consecutive_failed_count", 0) or 0),
+                            "budget_left": int(context.get("budget_left", 0) or 0),
+                        },
+                    }
+                )
+                break
+
+            await asyncio.sleep(float(context.get("request_interval_seconds", 0.35) or 0.35))
+
+        traces.append(
+            {
+                "step": "hdhive_unlock_summary",
+                "status": "info",
+                "message": (
+                    f"HDHive 自动解锁汇总: 尝试 {local_attempted}，"
+                    f"成功 {local_success}，失败 {local_failed}，"
+                    f"跳过 {local_skipped}，消耗 {local_points_spent} 积分"
+                ),
+                "payload": {
+                    "attempted": local_attempted,
+                    "success": local_success,
+                    "failed": local_failed,
+                    "skipped": local_skipped,
+                    "points_spent": local_points_spent,
+                    "total_attempted": int(stats.get("attempted") or 0),
+                    "total_success": int(stats.get("success") or 0),
+                    "total_failed": int(stats.get("failed") or 0),
+                    "total_skipped": int(stats.get("skipped") or 0),
+                    "total_points_spent": int(stats.get("points_spent") or 0),
+                    "budget_left": int(context.get("budget_left", 0) or 0),
+                    "unlocked_count": local_success,
+                    "stopped_by_circuit": bool(context.get("stopped_by_circuit")),
+                },
+            }
+        )
+        return normalized_items
+
+    @staticmethod
+    def _allow_unlock_by_threshold(unlock_points: int, threshold: int, inclusive: bool) -> bool:
+        if inclusive:
+            return unlock_points <= threshold
+        return unlock_points < threshold
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _should_stop_unlocking_on_message(message: str) -> bool:
+        text = str(message or "").lower()
+        if not text:
+            return False
+        stop_tokens = (
+            "积分不足",
+            "余额不足",
+            "token",
+            "unauthorized",
+            "forbidden",
+            "cookie",
+            "登录",
+            "认证",
+        )
+        return any(token in text for token in stop_tokens)
 
     async def _store_new_resources(
         self,
@@ -1129,6 +1427,7 @@ class SubscriptionService:
             f"{result['channel']} 检查完成: 订阅 {result['checked_count']} 项, "
             f"扫描资源 {result['resource_checked_count']} 条(重复 {result['resource_duplicate_count']}), "
             f"{new_resource_desc}, "
+            f"HDHive 解锁 尝试 {result['hdhive_unlock_attempted_count']} 条(成功 {result['hdhive_unlock_success_count']} / 失败 {result['hdhive_unlock_failed_count']} / 跳过 {result['hdhive_unlock_skipped_count']} / 消耗 {result['hdhive_unlock_points_spent']} 积分), "
             f"自动转存成功 {result['auto_saved_count']} 条(新资源 {result['auto_new_saved_count']} / 历史重试 {result['auto_retry_saved_count']}), "
             f"自动转存失败 {result['auto_failed_count']} 条(新资源 {result['auto_new_failed_count']} / 历史重试 {result['auto_retry_failed_count']}), "
             f"检查失败 {result['failed_count']} 项"

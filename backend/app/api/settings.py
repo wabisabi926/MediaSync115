@@ -32,6 +32,10 @@ class RuntimeSettingsRequest(BaseModel):
     subscription_pansou_interval_hours: Optional[int] = None
     subscription_pansou_run_time: Optional[str] = None
     subscription_resource_priority: Optional[list[str]] = None
+    subscription_hdhive_auto_unlock_enabled: Optional[bool] = None
+    subscription_hdhive_unlock_max_points_per_item: Optional[int] = None
+    subscription_hdhive_unlock_budget_points_per_run: Optional[int] = None
+    subscription_hdhive_unlock_threshold_inclusive: Optional[bool] = None
 
 
 def _normalize_subscription_priority(raw: object) -> list[str]:
@@ -77,6 +81,31 @@ async def _validate_priority_source_config(merged_settings: dict) -> None:
         raise HTTPException(status_code=400, detail="；".join(errors))
 
 
+def _validate_hdhive_unlock_settings(merged_settings: dict) -> None:
+    enabled = bool(merged_settings.get("subscription_hdhive_auto_unlock_enabled", False))
+    if not enabled:
+        return
+
+    cookie = str(merged_settings.get("hdhive_cookie") or "").strip()
+    base_url = str(merged_settings.get("hdhive_base_url") or "").strip()
+    if not cookie or not base_url:
+        raise HTTPException(status_code=400, detail="启用 HDHive 自动解锁时必须配置 HDHive Cookie 和 Base URL")
+
+    try:
+        max_points_per_item = int(merged_settings.get("subscription_hdhive_unlock_max_points_per_item", 0) or 0)
+    except Exception:
+        max_points_per_item = 0
+    if max_points_per_item < 1:
+        raise HTTPException(status_code=400, detail="HDHive 自动解锁单条积分阈值必须大于等于 1")
+
+    try:
+        budget_points = int(merged_settings.get("subscription_hdhive_unlock_budget_points_per_run", 0) or 0)
+    except Exception:
+        budget_points = 0
+    if budget_points < 1:
+        raise HTTPException(status_code=400, detail="HDHive 自动解锁任务积分预算必须大于等于 1")
+
+
 @router.get("/runtime")
 async def get_runtime_settings():
     return runtime_settings_service.get_all()
@@ -85,10 +114,18 @@ async def get_runtime_settings():
 @router.put("/runtime")
 async def update_runtime_settings(request: RuntimeSettingsRequest):
     payload = request.model_dump(exclude_none=True)
+    merged_settings = runtime_settings_service.get_all()
+    merged_settings.update(payload)
     if "subscription_resource_priority" in payload:
-        merged_settings = runtime_settings_service.get_all()
-        merged_settings.update(payload)
         await _validate_priority_source_config(merged_settings)
+    unlock_keys = {
+        "subscription_hdhive_auto_unlock_enabled",
+        "subscription_hdhive_unlock_max_points_per_item",
+        "subscription_hdhive_unlock_budget_points_per_run",
+        "subscription_hdhive_unlock_threshold_inclusive",
+    }
+    if any(key in payload for key in unlock_keys) or payload.get("hdhive_cookie") is not None:
+        _validate_hdhive_unlock_settings(merged_settings)
     try:
         updated = runtime_settings_service.update_bulk(payload)
         await subscription_scheduler_service.ensure_subscription_tasks()

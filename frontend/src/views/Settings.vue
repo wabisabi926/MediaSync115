@@ -343,6 +343,33 @@
               </div>
             </el-form-item>
 
+            <el-divider content-position="left">HDHive 积分解锁策略</el-divider>
+            <el-form-item label="启用自动解锁">
+              <el-switch v-model="schedulerForm.hdhiveUnlock.enabled" />
+            </el-form-item>
+            <el-form-item label="单条积分阈值">
+              <el-input-number
+                v-model="schedulerForm.hdhiveUnlock.maxPointsPerItem"
+                :min="1"
+                :max="9999"
+                :disabled="!schedulerForm.hdhiveUnlock.enabled"
+              />
+              <el-text size="small" type="info" style="margin-left: 8px">
+                仅自动解锁积分小于等于该值的资源（<= n）
+              </el-text>
+            </el-form-item>
+            <el-form-item label="每次任务总预算">
+              <el-input-number
+                v-model="schedulerForm.hdhiveUnlock.budgetPointsPerRun"
+                :min="1"
+                :max="99999"
+                :disabled="!schedulerForm.hdhiveUnlock.enabled"
+              />
+              <el-text size="small" type="info" style="margin-left: 8px">
+                每次订阅任务最多自动扣除的积分总额
+              </el-text>
+            </el-form-item>
+
             <el-divider content-position="left">Nullbr 渠道</el-divider>
             <el-form-item label="启用任务">
               <el-switch v-model="schedulerForm.nullbr.enabled" />
@@ -524,6 +551,12 @@ const schedulerForm = ref({
     enabled: false,
     intervalHours: 24,
     runTime: '03:30'
+  },
+  hdhiveUnlock: {
+    enabled: false,
+    maxPointsPerItem: 10,
+    budgetPointsPerRun: 30,
+    thresholdInclusive: true
   }
 })
 const sourceLabelMap = {
@@ -1058,6 +1091,10 @@ const fetchRuntimeSettings = async () => {
     schedulerForm.value.pansou.enabled = !!data.subscription_pansou_enabled
     schedulerForm.value.pansou.intervalHours = Number(data.subscription_pansou_interval_hours || 24)
     schedulerForm.value.pansou.runTime = data.subscription_pansou_run_time || '03:30'
+    schedulerForm.value.hdhiveUnlock.enabled = !!data.subscription_hdhive_auto_unlock_enabled
+    schedulerForm.value.hdhiveUnlock.maxPointsPerItem = Number(data.subscription_hdhive_unlock_max_points_per_item || 10)
+    schedulerForm.value.hdhiveUnlock.budgetPointsPerRun = Number(data.subscription_hdhive_unlock_budget_points_per_run || 30)
+    schedulerForm.value.hdhiveUnlock.thresholdInclusive = data.subscription_hdhive_unlock_threshold_inclusive !== false
 
     const priority = Array.isArray(data.subscription_resource_priority)
       ? data.subscription_resource_priority.map(item => String(item || '').trim().toLowerCase())
@@ -1088,6 +1125,19 @@ const movePriority = (source, direction) => {
 }
 
 const handleSaveScheduler = async () => {
+  if (schedulerForm.value.hdhiveUnlock.enabled) {
+    const maxPointsPerItem = Number(schedulerForm.value.hdhiveUnlock.maxPointsPerItem || 0)
+    const budgetPointsPerRun = Number(schedulerForm.value.hdhiveUnlock.budgetPointsPerRun || 0)
+    if (maxPointsPerItem < 1) {
+      ElMessage.warning('HDHive 单条积分阈值必须大于等于 1')
+      return
+    }
+    if (budgetPointsPerRun < 1) {
+      ElMessage.warning('HDHive 每次任务总预算必须大于等于 1')
+      return
+    }
+  }
+
   savingScheduler.value = true
   try {
     await settingsApi.updateRuntime({
@@ -1097,9 +1147,13 @@ const handleSaveScheduler = async () => {
       subscription_pansou_enabled: schedulerForm.value.pansou.enabled,
       subscription_pansou_interval_hours: Number(schedulerForm.value.pansou.intervalHours || 24),
       subscription_pansou_run_time: schedulerForm.value.pansou.runTime || '03:30',
-      subscription_resource_priority: resourcePriority.value
+      subscription_resource_priority: resourcePriority.value,
+      subscription_hdhive_auto_unlock_enabled: schedulerForm.value.hdhiveUnlock.enabled,
+      subscription_hdhive_unlock_max_points_per_item: Number(schedulerForm.value.hdhiveUnlock.maxPointsPerItem || 10),
+      subscription_hdhive_unlock_budget_points_per_run: Number(schedulerForm.value.hdhiveUnlock.budgetPointsPerRun || 30),
+      subscription_hdhive_unlock_threshold_inclusive: schedulerForm.value.hdhiveUnlock.thresholdInclusive !== false
     })
-    ElMessage.success('订阅任务与资源优先级配置已保存')
+    ElMessage.success('订阅任务、资源优先级与 HDHive 解锁策略已保存')
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || '保存失败')
   } finally {
