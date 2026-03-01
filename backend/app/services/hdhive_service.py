@@ -276,6 +276,11 @@ class HDHiveService:
                     share_link = ""
 
             title = str(row.get("title") or "").strip() or f"HDHive 资源 #{index + 1}"
+            resource_name = (
+                str(row.get("remark") or "").strip()
+                or str(row.get("name") or "").strip()
+                or title
+            )
             size = str(row.get("share_size") or "").strip()
             quality = row.get("source") if isinstance(row.get("source"), list) else []
             resolution = row.get("video_resolution") if isinstance(row.get("video_resolution"), list) else []
@@ -287,6 +292,7 @@ class HDHiveService:
                 "id": row.get("id") or resource_slug or f"hdhive-{index}",
                 "slug": resource_slug,
                 "title": title,
+                "resource_name": resource_name,
                 "size": size,
                 "quality": quality,
                 "resolution": resolution,

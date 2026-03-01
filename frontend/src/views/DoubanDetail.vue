@@ -121,7 +121,13 @@
                 <el-table v-if="hdhivePan115Resources.length" :data="hdhivePan115Resources" stripe class="resource-table">
                   <el-table-column label="资源名称" min-width="360" show-overflow-tooltip>
                     <template #default="{ row }">
-                      <span class="resource-name">{{ row.title || row.name || '未命名资源' }}</span>
+                      <div class="resource-name">{{ row.resource_name || row.title || row.name || '未命名资源' }}</div>
+                      <div
+                        v-if="row.resource_name && row.title && row.resource_name !== row.title"
+                        class="text-muted"
+                      >
+                        {{ row.title }}
+                      </div>
                     </template>
                   </el-table-column>
                   <el-table-column label="来源" width="100" align="center">
@@ -131,6 +137,9 @@
                   </el-table-column>
                   <el-table-column label="大小" width="110" align="center">
                     <template #default="{ row }">{{ row.size || '-' }}</template>
+                  </el-table-column>
+                  <el-table-column label="积分" width="80" align="center">
+                    <template #default="{ row }">{{ Number(row.unlock_points || 0) }}</template>
                   </el-table-column>
                   <el-table-column label="操作" width="180" align="center" fixed="right">
                     <template #default="{ row }">

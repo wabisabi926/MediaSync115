@@ -46,7 +46,10 @@
                 >
                   <el-table-column label="资源名称" min-width="300" show-overflow-tooltip>
                     <template #default="{ row }">
-                      <span class="resource-name">{{ row.title }}</span>
+                      <div class="resource-name">{{ row.resource_name || row.title }}</div>
+                      <div v-if="row.resource_name && row.title && row.resource_name !== row.title" class="text-muted">
+                        {{ row.title }}
+                      </div>
                     </template>
                   </el-table-column>
                   <el-table-column label="画质" width="120" align="center">
@@ -173,6 +176,11 @@
                   <el-table-column label="大小" width="100" align="center">
                     <template #default="{ row }">
                       <span class="resource-size">{{ row.size || '-' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="积分" width="80" align="center">
+                    <template #default="{ row }">
+                      <span>{{ Number(row.unlock_points || 0) }}</span>
                     </template>
                   </el-table-column>
                   <el-table-column label="操作" width="100" align="center" fixed="right">
@@ -1084,4 +1092,3 @@ onBeforeUnmount(() => {
   to { opacity: 1; transform: translateY(0); }
 }
 </style>
-
