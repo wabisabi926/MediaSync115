@@ -404,6 +404,17 @@ class TgService:
 
         should_cleanup = False
         try:
+            if await client.is_user_authorized():
+                user = await client.get_me()
+                final_session = client.session.save()
+                self._session = str(final_session or "").strip()
+                should_cleanup = True
+                return {
+                    "authorized": True,
+                    "need_password": False,
+                    "session": self._session,
+                    "user": self._serialize_user(user),
+                }
             user = await asyncio.wait_for(qr_login.wait(), timeout=0.2)
             final_session = client.session.save()
             self._session = str(final_session or "").strip()
