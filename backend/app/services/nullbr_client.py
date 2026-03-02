@@ -31,7 +31,7 @@ class NullbrClient:
     def _get_client(self) -> httpx.Client:
         """获取或创建配置了代理的 httpx 客户端"""
         if self._client is None:
-            self._client = proxy_manager.create_httpx_client(timeout=self._timeout)
+            self._client = proxy_manager.create_sync_httpx_client(timeout=self._timeout)
         return self._client
 
     def _generate_methods(self):

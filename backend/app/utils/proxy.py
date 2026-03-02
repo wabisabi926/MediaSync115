@@ -206,6 +206,34 @@ class ProxyManager:
 
         return httpx_module.AsyncClient(**client_kwargs)
 
+    def create_sync_httpx_client(self, **kwargs) -> "httpx.Client":
+        """
+        创建配置了代理的 httpx.Client (同步客户端)
+
+        Args:
+            **kwargs: 传递给 httpx.Client 的其他参数
+
+        Returns:
+            配置了代理的 Client 实例
+        """
+        httpx_module = _get_httpx()
+
+        client_kwargs = dict(kwargs)
+        mounts = {}
+
+        http_proxy = self._http_proxy or self._all_proxy
+        https_proxy = self._https_proxy or self._all_proxy
+
+        if http_proxy:
+            mounts["http://"] = httpx_module.HTTPTransport(proxy=http_proxy)
+        if https_proxy:
+            mounts["https://"] = httpx_module.HTTPTransport(proxy=https_proxy)
+
+        if mounts:
+            client_kwargs["mounts"] = mounts
+
+        return httpx_module.Client(**client_kwargs)
+
     def get_current_config(self) -> Dict[str, Optional[str]]:
         """获取当前代理配置"""
         return {
