@@ -441,6 +441,92 @@
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane label="代理设置" name="proxy">
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>代理配置</span>
+              <el-tag v-if="proxyStatus.hasProxy" type="success" size="small">已配置</el-tag>
+              <el-tag v-else type="info" size="small">未配置</el-tag>
+            </div>
+          </template>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 16px"
+          >
+            <template #title>
+              代理配置说明
+            </template>
+            <template #default>
+              配置代理后，所有外部服务请求（TMDB、HDHive、Nullbr、Pansou）都将通过代理访问。代理配置需要在后端 .env 文件中设置环境变量。
+            </template>
+          </el-alert>
+
+          <el-form :model="proxyForm" label-width="120px">
+            <el-form-item label="HTTP 代理">
+              <el-input
+                v-model="proxyForm.httpProxy"
+                placeholder="例如: http://127.0.0.1:7890"
+              />
+              <el-text size="small" type="info">
+                用于 HTTP 协议请求的代理地址
+              </el-text>
+            </el-form-item>
+            <el-form-item label="HTTPS 代理">
+              <el-input
+                v-model="proxyForm.httpsProxy"
+                placeholder="例如: http://127.0.0.1:7890"
+              />
+              <el-text size="small" type="info">
+                用于 HTTPS 协议请求的代理地址
+              </el-text>
+            </el-form-item>
+            <el-form-item label="通用代理">
+              <el-input
+                v-model="proxyForm.allProxy"
+                placeholder="例如: http://127.0.0.1:7890"
+              />
+              <el-text size="small" type="info">
+                当 HTTP/HTTPS 代理未设置时使用此代理
+              </el-text>
+            </el-form-item>
+            <el-form-item label="SOCKS 代理">
+              <el-input
+                v-model="proxyForm.socksProxy"
+                placeholder="例如: socks5://127.0.0.1:1080"
+              />
+              <el-text size="small" type="info">
+                SOCKS5 代理地址，支持用户名密码: socks5://user:pass@host:port
+              </el-text>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingProxy" @click="handleSaveProxy">保存代理配置</el-button>
+              <el-button :loading="testingProxy" @click="handleTestProxy">检测代理状态</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-divider content-position="left">服务连接状态</el-divider>
+          <div v-if="healthStatus.checked" class="health-status">
+            <el-row :gutter="16">
+              <el-col :span="12" v-for="(service, key) in healthStatus.services" :key="key">
+                <el-card shadow="never" class="service-card">
+                  <div class="service-header">
+                    <span class="service-name">{{ serviceNameMap[key] || key }}</span>
+                    <el-tag :type="service.valid ? 'success' : 'danger'" size="small">
+                      {{ service.valid ? '正常' : '异常' }}
+                    </el-tag>
+                  </div>
+                  <div class="service-message">{{ service.message }}</div>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+        </el-card>
+      </el-tab-pane>
+
       <el-tab-pane label="订阅任务" name="scheduler">
         <el-card class="settings-card">
           <template #header>
@@ -775,6 +861,33 @@ const resourcePriority = ref(['nullbr', 'hdhive', 'pansou', 'tg'])
 const pansouForm = ref({
   baseUrl: ''
 })
+
+// 代理配置
+const proxyForm = ref({
+  httpProxy: '',
+  httpsProxy: '',
+  allProxy: '',
+  socksProxy: ''
+})
+const proxyStatus = ref({
+  hasProxy: false
+})
+const healthStatus = ref({
+  checked: false,
+  allValid: false,
+  validCount: 0,
+  totalCount: 0,
+  services: {}
+})
+const serviceNameMap = {
+  nullbr: 'Nullbr',
+  hdhive: 'HDHive',
+  tg: 'Telegram',
+  tmdb: 'TMDB',
+  pansou: 'Pansou'
+}
+const savingProxy = ref(false)
+const testingProxy = ref(false)
 
 const saving = ref(false)
 const testing = ref(false)
@@ -1117,6 +1230,67 @@ const fetchPansouConfig = async () => {
     pansouHealthStatus.value = data.health?.status || ''
   } catch (error) {
     console.error('Failed to fetch pansou config:', error)
+  }
+}
+
+// 代理相关方法
+const fetchProxyStatus = async () => {
+  try {
+    const { data } = await settingsApi.getProxy()
+    proxyStatus.value.hasProxy = data.has_proxy || false
+  } catch (error) {
+    console.error('Failed to fetch proxy status:', error)
+  }
+}
+
+const fetchHealthStatus = async () => {
+  try {
+    const { data } = await settingsApi.checkAllHealth()
+    healthStatus.value = {
+      checked: true,
+      allValid: data.all_valid || false,
+      validCount: data.valid_count || 0,
+      totalCount: data.total_count || 0,
+      services: data.services || {}
+    }
+  } catch (error) {
+    console.error('Failed to fetch health status:', error)
+  }
+}
+
+const handleSaveProxy = async () => {
+  savingProxy.value = true
+  try {
+    await settingsApi.updateRuntime({
+      http_proxy: proxyForm.value.httpProxy || null,
+      https_proxy: proxyForm.value.httpsProxy || null,
+      all_proxy: proxyForm.value.allProxy || null,
+      socks_proxy: proxyForm.value.socksProxy || null
+    })
+    ElMessage.success('代理配置已保存，重启后端服务生效')
+    await fetchProxyStatus()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '代理配置保存失败')
+  } finally {
+    savingProxy.value = false
+  }
+}
+
+const handleTestProxy = async () => {
+  testingProxy.value = true
+  try {
+    await fetchHealthStatus()
+    const validCount = healthStatus.value.validCount
+    const totalCount = healthStatus.value.totalCount
+    if (validCount === totalCount) {
+      ElMessage.success(`所有服务连接正常 (${validCount}/${totalCount})`)
+    } else {
+      ElMessage.warning(`部分服务连接异常 (${validCount}/${totalCount} 正常)`)
+    }
+  } catch (error) {
+    ElMessage.error('服务状态检测失败')
+  } finally {
+    testingProxy.value = false
   }
 }
 
@@ -1933,6 +2107,8 @@ onMounted(() => {
   fetchOfflineDefaultFolder()
   fetchPansouConfig()
   fetchSubscriptionLogs()
+  fetchProxyStatus()
+  fetchHealthStatus()
 })
 
 onBeforeUnmount(() => {
@@ -2103,6 +2279,30 @@ onBeforeUnmount(() => {
       strong {
         color: var(--ms-text-primary);
         font-size: 16px;
+      }
+    }
+
+    .health-status {
+      .service-card {
+        margin-bottom: 12px;
+
+        .service-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 8px;
+
+          .service-name {
+            font-weight: 600;
+            color: var(--ms-text-primary);
+          }
+        }
+
+        .service-message {
+          font-size: 12px;
+          color: var(--ms-text-secondary);
+          line-height: 1.4;
+        }
       }
     }
 
