@@ -811,6 +811,38 @@ const ensureHdhiveShareLink = async (row, actionLabel = '转存', options = {}) 
   }
 }
 
+const normalizeKeywordFingerprint = (value) => {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s\-_·:：,.，。!！?？/\\'"`()\[\]]+/g, '')
+    .toLowerCase()
+}
+
+const buildHdhiveKeywords = () => {
+  const name = String(tv.value?.name || '').trim()
+  const originalName = String(tv.value?.original_name || '').trim()
+  const year = String(tv.value?.first_air_date || '').split('-')[0]
+  const candidates = []
+  const seen = new Set()
+  const add = (keyword) => {
+    const raw = String(keyword || '').trim()
+    if (!raw) return
+    const key = normalizeKeywordFingerprint(raw)
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    candidates.push(raw)
+  }
+
+  add(name)
+  if (name && year) add(`${name} ${year}`)
+  add(originalName)
+  if (originalName && year) add(`${originalName} ${year}`)
+  return candidates
+}
+
 const fetchTv = async () => {
   const tmdbId = route.params.id
   loading.value = true
@@ -901,7 +933,27 @@ const handleFetchHdhivePan115 = async () => {
   hdhiveTried.value = true
   try {
     const { data } = await searchApi.getTvPan115Hdhive(route.params.id)
-    const hdhiveList = Array.isArray(data.list) ? data.list : []
+    let hdhiveList = Array.isArray(data.list) ? data.list : []
+    hdhiveList = hdhiveList.map((item) => ({ ...item, source_service: item?.source_service || 'hdhive' }))
+
+    if (hdhiveList.length === 0) {
+      const keywordCandidates = buildHdhiveKeywords()
+      const dedup = new Map()
+      for (const keyword of keywordCandidates) {
+        const { data: keywordData } = await searchApi.getHdhivePan115ByKeyword(keyword, 'tv')
+        const rows = Array.isArray(keywordData?.list) ? keywordData.list : []
+        for (const row of rows) {
+          const normalizedRow = { ...row, source_service: row?.source_service || 'hdhive' }
+          const key = `${String(normalizedRow?.slug || '')}|${String(normalizedRow?.share_link || normalizedRow?.resource_name || normalizedRow?.title || '')}`.toLowerCase()
+          if (!dedup.has(key)) {
+            dedup.set(key, normalizedRow)
+          }
+        }
+        if (dedup.size >= 30) break
+      }
+      hdhiveList = Array.from(dedup.values()).slice(0, 30)
+    }
+
     const mergedList = mergePan115Resources(pan115Resources.value, hdhiveList)
     pan115Resources.value = mergedList
     writePan115Cache(mergedList)
