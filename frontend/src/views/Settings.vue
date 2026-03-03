@@ -404,6 +404,60 @@
               </el-descriptions-item>
             </el-descriptions>
           </div>
+
+          <el-divider content-position="left">TG 索引管理</el-divider>
+          <el-form :model="tgIndexForm" label-width="180px">
+            <el-form-item label="启用索引搜索">
+              <el-switch v-model="tgIndexForm.enabled" />
+            </el-form-item>
+            <el-form-item label="索引无结果时回退实时搜索">
+              <el-switch v-model="tgIndexForm.realtimeFallbackEnabled" />
+            </el-form-item>
+            <el-form-item label="索引每频道返回上限">
+              <el-input-number v-model="tgIndexForm.queryLimitPerChannel" :min="20" :max="1000" />
+            </el-form-item>
+            <el-form-item label="回填批次大小">
+              <el-input-number v-model="tgIndexForm.backfillBatchSize" :min="50" :max="2000" />
+            </el-form-item>
+            <el-form-item label="建议增量间隔(分钟)">
+              <el-input-number v-model="tgIndexForm.incrementalIntervalMinutes" :min="5" :max="1440" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingTgIndexConfig" @click="handleSaveTgIndexConfig">
+                保存索引配置
+              </el-button>
+              <el-button :loading="loadingTgIndexStatus" @click="fetchTgIndexStatus">
+                刷新索引状态
+              </el-button>
+              <el-button :loading="runningTgBackfill" @click="handleStartTgBackfill">开始全量回填</el-button>
+              <el-button :loading="runningTgIncremental" @click="handleRunTgIncremental">执行一次增量同步</el-button>
+              <el-button type="danger" plain :loading="rebuildingTgIndex" @click="handleRebuildTgIndex">
+                重建索引
+              </el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-alert
+            :closable="false"
+            type="info"
+            show-icon
+            style="margin-bottom: 10px;"
+            :title="`当前索引资源总数: ${tgIndexStatus.totalIndexed}`"
+          />
+          <el-table :data="tgIndexStatus.channels" size="small" border>
+            <el-table-column prop="channel" label="频道" min-width="180" />
+            <el-table-column prop="indexed_count" label="索引条数" width="100" />
+            <el-table-column prop="last_message_id" label="最新消息ID" width="120" />
+            <el-table-column prop="backfill_completed" label="全量回填" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.backfill_completed ? 'success' : 'warning'" size="small">
+                  {{ row.backfill_completed ? '已完成' : '未完成' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="last_synced_at" label="最近同步时间" min-width="170" :formatter="formatBeijingTableCell" />
+            <el-table-column prop="last_error" label="最近错误" min-width="220" />
+          </el-table>
         </el-card>
       </el-tab-pane>
 
@@ -858,6 +912,13 @@ const tgForm = ref({
   searchDays: 30,
   maxMessagesPerChannel: 200
 })
+const tgIndexForm = ref({
+  enabled: true,
+  realtimeFallbackEnabled: true,
+  queryLimitPerChannel: 120,
+  backfillBatchSize: 200,
+  incrementalIntervalMinutes: 30
+})
 
 const tgLoginForm = ref({
   tempSession: '',
@@ -964,6 +1025,11 @@ const loggingOutTg = ref(false)
 const startingTgQr = ref(false)
 const pollingTgQr = ref(false)
 const importingTgSession = ref(false)
+const savingTgIndexConfig = ref(false)
+const loadingTgIndexStatus = ref(false)
+const runningTgBackfill = ref(false)
+const runningTgIncremental = ref(false)
+const rebuildingTgIndex = ref(false)
 const savingTmdb = ref(false)
 const savingScheduler = ref(false)
 const savingResourcePriority = ref(false)
@@ -1013,6 +1079,12 @@ const tgStatus = reactive({
   valid: false,
   message: '',
   user: null
+})
+const tgIndexStatus = reactive({
+  totalIndexed: 0,
+  channels: [],
+  runningJobs: [],
+  latestJobs: []
 })
 const embyStatus = reactive({
   checked: false,
@@ -1808,6 +1880,119 @@ const handleTgLogout = async () => {
   }
 }
 
+const fetchTgIndexStatus = async () => {
+  loadingTgIndexStatus.value = true
+  try {
+    const { data } = await settingsApi.getTgIndexStatus()
+    const status = data.status || {}
+    const index = status.index || {}
+    tgIndexStatus.totalIndexed = Number(index.total_indexed || 0)
+    tgIndexStatus.channels = Array.isArray(index.channels) ? index.channels : []
+    tgIndexStatus.runningJobs = Array.isArray(status.running_jobs) ? status.running_jobs : []
+    tgIndexStatus.latestJobs = Array.isArray(status.latest_jobs) ? status.latest_jobs : []
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '获取 TG 索引状态失败')
+  } finally {
+    loadingTgIndexStatus.value = false
+  }
+}
+
+const handleSaveTgIndexConfig = async () => {
+  savingTgIndexConfig.value = true
+  try {
+    await settingsApi.updateRuntime({
+      tg_index_enabled: tgIndexForm.value.enabled,
+      tg_index_realtime_fallback_enabled: tgIndexForm.value.realtimeFallbackEnabled,
+      tg_index_query_limit_per_channel: Number(tgIndexForm.value.queryLimitPerChannel || 120),
+      tg_backfill_batch_size: Number(tgIndexForm.value.backfillBatchSize || 200),
+      tg_incremental_interval_minutes: Number(tgIndexForm.value.incrementalIntervalMinutes || 30)
+    })
+    ElMessage.success('TG 索引配置已保存')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || 'TG 索引配置保存失败')
+  } finally {
+    savingTgIndexConfig.value = false
+  }
+}
+
+const pollTgIndexJob = async (jobId) => {
+  const normalized = String(jobId || '').trim()
+  if (!normalized) return
+  for (let i = 0; i < 600; i++) {
+    try {
+      const { data } = await settingsApi.getTgIndexJob(normalized)
+      const job = data.job || {}
+      if (String(job.status || '') !== 'running') {
+        await fetchTgIndexStatus()
+        if (job.status === 'success') {
+          ElMessage.success(job.message || 'TG 索引任务执行成功')
+        } else if (job.status === 'partial') {
+          ElMessage.warning(job.message || 'TG 索引任务部分成功')
+        } else if (job.status === 'failed') {
+          ElMessage.error(job.message || 'TG 索引任务失败')
+        }
+        return
+      }
+    } catch (error) {
+      ElMessage.error(error.response?.data?.detail || '查询 TG 索引任务状态失败')
+      return
+    }
+    await wait(2000)
+  }
+  ElMessage.warning('TG 索引任务仍在运行，请稍后刷新状态')
+}
+
+const handleStartTgBackfill = async () => {
+  runningTgBackfill.value = true
+  try {
+    const { data } = await settingsApi.startTgIndexBackfill(false)
+    const jobId = data.job?.job_id || ''
+    ElMessage.success('TG 全量回填任务已启动')
+    await fetchTgIndexStatus()
+    if (jobId) {
+      await pollTgIndexJob(jobId)
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '启动 TG 全量回填失败')
+  } finally {
+    runningTgBackfill.value = false
+  }
+}
+
+const handleRunTgIncremental = async () => {
+  runningTgIncremental.value = true
+  try {
+    const { data } = await settingsApi.runTgIndexIncremental()
+    const jobId = data.job?.job_id || ''
+    ElMessage.success('TG 增量同步任务已启动')
+    await fetchTgIndexStatus()
+    if (jobId) {
+      await pollTgIndexJob(jobId)
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '启动 TG 增量同步失败')
+  } finally {
+    runningTgIncremental.value = false
+  }
+}
+
+const handleRebuildTgIndex = async () => {
+  rebuildingTgIndex.value = true
+  try {
+    const { data } = await settingsApi.rebuildTgIndex()
+    const jobId = data.job?.job_id || ''
+    ElMessage.success('TG 索引重建任务已启动')
+    await fetchTgIndexStatus()
+    if (jobId) {
+      await pollTgIndexJob(jobId)
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '启动 TG 索引重建失败')
+  } finally {
+    rebuildingTgIndex.value = false
+  }
+}
+
 const handleTestNullbr = async () => {
   testingNullbr.value = true
   try {
@@ -1875,6 +2060,11 @@ const fetchRuntimeSettings = async () => {
     tgForm.value.searchDays = Number(data.tg_search_days || 30)
     tgForm.value.maxMessagesPerChannel = Number(data.tg_max_messages_per_channel || 200)
     tgForm.value.channelsText = Array.isArray(data.tg_channel_usernames) ? data.tg_channel_usernames.join('\n') : ''
+    tgIndexForm.value.enabled = data.tg_index_enabled !== false
+    tgIndexForm.value.realtimeFallbackEnabled = data.tg_index_realtime_fallback_enabled !== false
+    tgIndexForm.value.queryLimitPerChannel = Number(data.tg_index_query_limit_per_channel || 120)
+    tgIndexForm.value.backfillBatchSize = Number(data.tg_backfill_batch_size || 200)
+    tgIndexForm.value.incrementalIntervalMinutes = Number(data.tg_incremental_interval_minutes || 30)
     nullbrForm.value.appId = data.nullbr_app_id || ''
     nullbrForm.value.apiKey = data.nullbr_api_key || ''
     nullbrForm.value.baseUrl = data.nullbr_base_url || ''
@@ -2219,6 +2409,7 @@ onMounted(() => {
   fetchDefaultFolder()
   fetchOfflineDefaultFolder()
   fetchPansouConfig()
+  fetchTgIndexStatus()
   fetchSubscriptionLogs()
   fetchProxyStatus()
   fetchHealthStatus()

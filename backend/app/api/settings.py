@@ -12,6 +12,7 @@ from app.services.nullbr_service import nullbr_service
 from app.services.pansou_service import pansou_service
 from app.services.runtime_settings_service import runtime_settings_service
 from app.services.subscription_scheduler_service import subscription_scheduler_service
+from app.services.tg_sync_service import tg_sync_service
 from app.services.tg_service import tg_service
 from app.services.tmdb_service import tmdb_service
 from app.services.emby_service import emby_service
@@ -44,6 +45,11 @@ class RuntimeSettingsRequest(BaseModel):
     tg_channel_usernames: Optional[list[str]] = None
     tg_search_days: Optional[int] = None
     tg_max_messages_per_channel: Optional[int] = None
+    tg_index_enabled: Optional[bool] = None
+    tg_index_realtime_fallback_enabled: Optional[bool] = None
+    tg_index_query_limit_per_channel: Optional[int] = None
+    tg_backfill_batch_size: Optional[int] = None
+    tg_incremental_interval_minutes: Optional[int] = None
     tmdb_api_key: Optional[str] = None
     tmdb_base_url: Optional[str] = None
     tmdb_image_base_url: Optional[str] = None
@@ -78,6 +84,10 @@ class TgQrStatusRequest(BaseModel):
 
 class TgImportSessionRequest(BaseModel):
     session: str
+
+
+class TgIndexBackfillRequest(BaseModel):
+    rebuild: Optional[bool] = False
 
 
 def _build_qr_image_data_url(content: str) -> str:
@@ -553,3 +563,66 @@ async def logout_tg():
         pass
     runtime_settings_service.clear_tg_session()
     return {"success": True}
+
+
+@router.get("/tg/index/status")
+async def get_tg_index_status():
+    try:
+        payload = await tg_sync_service.get_status()
+        return {
+            "success": True,
+            "status": payload,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/tg/index/backfill/start")
+async def start_tg_index_backfill(payload: TgIndexBackfillRequest):
+    try:
+        job = await tg_sync_service.start_backfill(rebuild=bool(payload.rebuild))
+        return {
+            "success": True,
+            "job": job,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/tg/index/incremental/run")
+async def run_tg_index_incremental():
+    try:
+        job = await tg_sync_service.run_incremental_once()
+        return {
+            "success": True,
+            "job": job,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/tg/index/jobs/{job_id}")
+async def get_tg_index_job(job_id: str):
+    normalized = str(job_id or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="job_id 不能为空")
+    try:
+        job = await tg_sync_service.get_job(normalized)
+        return {
+            "success": True,
+            "job": job,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/tg/index/rebuild")
+async def rebuild_tg_index():
+    try:
+        job = await tg_sync_service.start_backfill(rebuild=True)
+        return {
+            "success": True,
+            "job": job,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

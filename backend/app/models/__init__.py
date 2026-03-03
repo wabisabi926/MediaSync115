@@ -6,6 +6,8 @@ from app.models.models import (
     Subscription,
     SubscriptionExecutionLog,
     SubscriptionStepLog,
+    TgMessageIndex,
+    TgSyncState,
 )
 from app.models.scheduler_task import SchedulerTask
 from app.models.workflow import Workflow
@@ -18,6 +20,8 @@ __all__ = [
     "ExecutionStatus",
     "SubscriptionExecutionLog",
     "SubscriptionStepLog",
+    "TgMessageIndex",
+    "TgSyncState",
     "SchedulerTask",
     "Workflow",
 ]

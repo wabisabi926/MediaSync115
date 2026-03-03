@@ -140,7 +140,12 @@ export const settingsApi = {
   tgStartQrLogin: () => api.post('/settings/tg/login/qr/start'),
   tgCheckQrLogin: (token) => api.post('/settings/tg/login/qr/status', { token }),
   tgImportSession: (session) => api.post('/settings/tg/login/session/import', { session }),
-  tgLogout: () => api.post('/settings/tg/logout')
+  tgLogout: () => api.post('/settings/tg/logout'),
+  getTgIndexStatus: () => api.get('/settings/tg/index/status'),
+  startTgIndexBackfill: (rebuild = false) => api.post('/settings/tg/index/backfill/start', { rebuild }),
+  runTgIndexIncremental: () => api.post('/settings/tg/index/incremental/run'),
+  getTgIndexJob: (jobId) => api.get(`/settings/tg/index/jobs/${encodeURIComponent(jobId)}`),
+  rebuildTgIndex: () => api.post('/settings/tg/index/rebuild')
 }
 
 export const subscriptionApi = {

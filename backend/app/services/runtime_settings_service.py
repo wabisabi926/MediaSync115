@@ -34,6 +34,11 @@ class RuntimeSettingsService:
             "tg_channel_usernames": tg_service._parse_channels(settings.TG_CHANNEL_USERNAMES),
             "tg_search_days": int(settings.TG_SEARCH_DAYS or 30),
             "tg_max_messages_per_channel": int(settings.TG_MAX_MESSAGES_PER_CHANNEL or 200),
+            "tg_index_enabled": True,
+            "tg_index_realtime_fallback_enabled": True,
+            "tg_index_query_limit_per_channel": 120,
+            "tg_backfill_batch_size": 200,
+            "tg_incremental_interval_minutes": 30,
             "tmdb_api_key": settings.TMDB_API_KEY or "",
             "tmdb_base_url": settings.TMDB_BASE_URL,
             "tmdb_image_base_url": settings.TMDB_IMAGE_BASE_URL,
@@ -238,6 +243,33 @@ class RuntimeSettingsService:
         except Exception:
             return 200
 
+    def get_tg_index_enabled(self) -> bool:
+        return bool(self._data.get("tg_index_enabled", True))
+
+    def get_tg_index_realtime_fallback_enabled(self) -> bool:
+        return bool(self._data.get("tg_index_realtime_fallback_enabled", True))
+
+    def get_tg_index_query_limit_per_channel(self) -> int:
+        value = self._data.get("tg_index_query_limit_per_channel", 120)
+        try:
+            return max(20, int(value))
+        except Exception:
+            return 120
+
+    def get_tg_backfill_batch_size(self) -> int:
+        value = self._data.get("tg_backfill_batch_size", 200)
+        try:
+            return max(50, int(value))
+        except Exception:
+            return 200
+
+    def get_tg_incremental_interval_minutes(self) -> int:
+        value = self._data.get("tg_incremental_interval_minutes", 30)
+        try:
+            return max(5, int(value))
+        except Exception:
+            return 30
+
     def get_tmdb_api_key(self) -> str:
         return self._data["tmdb_api_key"]
 
@@ -430,6 +462,11 @@ class RuntimeSettingsService:
             "tg_channel_usernames": self.get_tg_channel_usernames(),
             "tg_search_days": self.get_tg_search_days(),
             "tg_max_messages_per_channel": self.get_tg_max_messages_per_channel(),
+            "tg_index_enabled": self.get_tg_index_enabled(),
+            "tg_index_realtime_fallback_enabled": self.get_tg_index_realtime_fallback_enabled(),
+            "tg_index_query_limit_per_channel": self.get_tg_index_query_limit_per_channel(),
+            "tg_backfill_batch_size": self.get_tg_backfill_batch_size(),
+            "tg_incremental_interval_minutes": self.get_tg_incremental_interval_minutes(),
             "tmdb_api_key": self.get_tmdb_api_key(),
             "tmdb_base_url": self.get_tmdb_base_url(),
             "tmdb_image_base_url": self.get_tmdb_image_base_url(),

@@ -1,5 +1,15 @@
 from datetime import datetime
-from sqlalchemy import String, Text, Integer, Boolean, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import (
+    String,
+    Text,
+    Integer,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Enum as SQLEnum,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 import enum
@@ -89,3 +99,38 @@ class SubscriptionStepLog(Base):
     message: Mapped[str] = mapped_column(String(500), nullable=False)
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TgMessageIndex(Base):
+    __tablename__ = "tg_message_index"
+    __table_args__ = (
+        UniqueConstraint("channel_username", "message_id", "share_link", name="uq_tg_message_index_unique"),
+        Index("ix_tg_message_index_channel_date", "channel_username", "message_date"),
+        Index("ix_tg_message_index_search_text", "search_text"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_username: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    message_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    share_link: Mapped[str] = mapped_column(Text, nullable=False)
+    message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_type_hint: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    search_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TgSyncState(Base):
+    __tablename__ = "tg_sync_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_username: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    last_message_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_message_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    backfill_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

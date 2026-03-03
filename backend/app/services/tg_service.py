@@ -312,6 +312,61 @@ class TgService:
             return line[:160]
         return fallback
 
+    def _build_rows_from_message(
+        self,
+        *,
+        channel: str,
+        message: Any,
+        normalized_media: str,
+        seen: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        msg_date = getattr(message, "date", None)
+        if msg_date and msg_date.tzinfo is None:
+            msg_date = msg_date.replace(tzinfo=timezone.utc)
+
+        raw_text = str(getattr(message, "raw_text", "") or "")
+        message_text = str(getattr(message, "message", "") or "")
+        links: list[str] = []
+        links.extend(self._extract_share_link_from_text(raw_text))
+        links.extend(self._extract_share_link_from_text(message_text))
+        entities = getattr(message, "entities", None) or []
+        for ent in entities:
+            if isinstance(ent, MessageEntityTextUrl):
+                links.extend(self._extract_share_link_from_text(str(getattr(ent, "url", "") or "")))
+        if not links:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for index, share_link in enumerate(links):
+            key = f"{str(channel).lower()}|{str(getattr(message, 'id', 0))}|{share_link.lower()}"
+            if seen is not None and key in seen:
+                continue
+            if seen is not None:
+                seen.add(key)
+            row_id = f"tg-{str(channel).replace('@', '')}-{getattr(message, 'id', 0)}-{index}"
+            title_fallback = f"Telegram 资源 {getattr(message, 'id', 0)}"
+            resource_name = self._build_resource_name(raw_text or message_text, title_fallback)
+            rows.append(
+                {
+                    "id": row_id,
+                    "media_type": "resource",
+                    "title": resource_name,
+                    "name": resource_name,
+                    "resource_name": resource_name,
+                    "overview": (raw_text or message_text)[:300],
+                    "poster_path": "",
+                    "source_service": "tg",
+                    "pan115_share_link": share_link,
+                    "share_link": share_link,
+                    "pan115_savable": self._is_likely_115_share_identifier(share_link),
+                    "tg_channel": str(channel),
+                    "tg_message_id": int(getattr(message, "id", 0) or 0),
+                    "tg_message_date": msg_date.isoformat() if msg_date else "",
+                    "tg_media_type_hint": normalized_media,
+                }
+            )
+        return rows
+
     async def send_login_code(self, phone: str | None = None) -> dict[str, Any]:
         self._ensure_login_config()
         final_phone = str(phone or self._phone or "").strip()
@@ -589,17 +644,37 @@ class TgService:
         search_days: int | None = None,
         max_messages: int | None = None,
     ) -> list[dict[str, Any]]:
-        self._ensure_search_config()
         normalized_keyword = str(keyword or "").strip()
         if not normalized_keyword:
             return []
         target_channels = channels or self._channels
         if not target_channels:
             return []
+        normalized_media = "tv" if str(media_type or "").strip().lower() == "tv" else "movie"
+
+        from app.services.runtime_settings_service import runtime_settings_service
+        from app.services.tg_index_service import tg_index_service
+
+        index_enabled = runtime_settings_service.get_tg_index_enabled()
+        fallback_enabled = runtime_settings_service.get_tg_index_realtime_fallback_enabled()
+        index_query_limit = runtime_settings_service.get_tg_index_query_limit_per_channel()
+
+        if index_enabled:
+            indexed_rows = await tg_index_service.search_resources(
+                keyword=normalized_keyword,
+                media_type=normalized_media,
+                channels=target_channels,
+                per_channel_limit=index_query_limit,
+            )
+            if indexed_rows:
+                return indexed_rows
+            if not fallback_enabled:
+                return []
+
+        self._ensure_search_config()
         days = max(1, int(search_days or self._search_days))
         limit = max(20, int(max_messages or self._max_messages))
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        normalized_media = "tv" if str(media_type or "").strip().lower() == "tv" else "movie"
         client = self._build_client(self._session)
         rows: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -622,46 +697,21 @@ class TgService:
                         continue
                     if not msg_date and getattr(message, "id", 0) <= 0:
                         continue
-                    raw_text = str(getattr(message, "raw_text", "") or "")
-                    message_text = str(getattr(message, "message", "") or "")
-                    links: list[str] = []
-                    links.extend(self._extract_share_link_from_text(raw_text))
-                    links.extend(self._extract_share_link_from_text(message_text))
-                    entities = getattr(message, "entities", None) or []
-                    for ent in entities:
-                        if isinstance(ent, MessageEntityTextUrl):
-                            links.extend(self._extract_share_link_from_text(str(getattr(ent, "url", "") or "")))
-                    if not links:
-                        continue
-                    for index, share_link in enumerate(links):
-                        key = f"{str(channel).lower()}|{str(getattr(message, 'id', 0))}|{share_link.lower()}"
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        row_id = f"tg-{str(channel).replace('@', '')}-{getattr(message, 'id', 0)}-{index}"
-                        title_fallback = f"Telegram 资源 {getattr(message, 'id', 0)}"
-                        resource_name = self._build_resource_name(raw_text or message_text, title_fallback)
-                        rows.append(
-                            {
-                                "id": row_id,
-                                "media_type": "resource",
-                                "title": resource_name,
-                                "name": resource_name,
-                                "resource_name": resource_name,
-                                "overview": (raw_text or message_text)[:300],
-                                "poster_path": "",
-                                "source_service": "tg",
-                                "pan115_share_link": share_link,
-                                "share_link": share_link,
-                                "pan115_savable": self._is_likely_115_share_identifier(share_link),
-                                "tg_channel": str(channel),
-                                "tg_message_id": int(getattr(message, "id", 0) or 0),
-                                "tg_message_date": msg_date.isoformat() if msg_date else "",
-                                "tg_media_type_hint": normalized_media,
-                            }
+                    rows.extend(
+                        self._build_rows_from_message(
+                            channel=str(channel),
+                            message=message,
+                            normalized_media=normalized_media,
+                            seen=seen,
                         )
+                    )
         finally:
             await client.disconnect()
+        if rows and index_enabled:
+            try:
+                await tg_index_service.upsert_rows(rows)
+            except Exception:
+                pass
         return rows
 
 
