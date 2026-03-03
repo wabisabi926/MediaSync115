@@ -279,6 +279,7 @@ async def get_subscription(subscription_id: int, db: AsyncSession = Depends(get_
 async def list_tv_missing_status(
     only_missing: bool = Query(True),
     limit: int = Query(200, ge=1, le=1000),
+    refresh: bool = Query(False, description="是否忽略缓存强制刷新"),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -292,10 +293,11 @@ async def list_tv_missing_status(
     )
     rows = result.scalars().all()
 
-    items: list[dict[str, Any]] = []
-    for sub in rows:
+    semaphore = asyncio.Semaphore(5)
+
+    async def build_one(sub: Subscription) -> dict[str, Any]:
         if sub.tmdb_id is None:
-            payload = {
+            return {
                 "subscription_id": sub.id,
                 "tmdb_id": None,
                 "title": sub.title,
@@ -308,10 +310,19 @@ async def list_tv_missing_status(
                 "missing_count": 0,
                 "missing_by_season": {},
             }
-        else:
-            status = await tv_missing_service.get_tv_missing_status(int(sub.tmdb_id), include_specials=False)
+
+        try:
+            async with semaphore:
+                status = await asyncio.wait_for(
+                    tv_missing_service.get_tv_missing_status(
+                        int(sub.tmdb_id),
+                        include_specials=False,
+                        refresh=bool(refresh),
+                    ),
+                    timeout=20.0,
+                )
             counts = status.get("counts") if isinstance(status.get("counts"), dict) else {}
-            payload = {
+            return {
                 "subscription_id": sub.id,
                 "tmdb_id": sub.tmdb_id,
                 "title": sub.title,
@@ -324,7 +335,38 @@ async def list_tv_missing_status(
                 "missing_count": int(counts.get("missing") or 0),
                 "missing_by_season": status.get("missing_by_season") or {},
             }
+        except asyncio.TimeoutError:
+            return {
+                "subscription_id": sub.id,
+                "tmdb_id": sub.tmdb_id,
+                "title": sub.title,
+                "year": sub.year,
+                "poster_path": sub.poster_path,
+                "status": "timeout",
+                "message": "缺集状态计算超时，请稍后重试",
+                "aired_count": 0,
+                "existing_count": 0,
+                "missing_count": 0,
+                "missing_by_season": {},
+            }
+        except Exception as exc:
+            return {
+                "subscription_id": sub.id,
+                "tmdb_id": sub.tmdb_id,
+                "title": sub.title,
+                "year": sub.year,
+                "poster_path": sub.poster_path,
+                "status": "error",
+                "message": str(exc),
+                "aired_count": 0,
+                "existing_count": 0,
+                "missing_count": 0,
+                "missing_by_season": {},
+            }
 
+    resolved = await asyncio.gather(*(build_one(sub) for sub in rows))
+    items: list[dict[str, Any]] = []
+    for payload in resolved:
         if only_missing and int(payload.get("missing_count") or 0) == 0:
             continue
         items.append(payload)
@@ -338,6 +380,7 @@ async def list_tv_missing_status(
 @router.get("/{subscription_id}/tv/missing-status")
 async def get_tv_missing_status(
     subscription_id: int,
+    refresh: bool = Query(False, description="是否忽略缓存强制刷新"),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -364,7 +407,11 @@ async def get_tv_missing_status(
             "counts": {"aired": 0, "existing": 0, "missing": 0},
         }
 
-    status = await tv_missing_service.get_tv_missing_status(int(subscription.tmdb_id), include_specials=False)
+    status = await tv_missing_service.get_tv_missing_status(
+        int(subscription.tmdb_id),
+        include_specials=False,
+        refresh=bool(refresh),
+    )
     return {
         "subscription_id": subscription.id,
         "tmdb_id": subscription.tmdb_id,

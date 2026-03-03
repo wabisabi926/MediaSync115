@@ -9,8 +9,8 @@
           <el-radio-button value="tv">电视剧</el-radio-button>
         </el-radio-group>
         <template v-else>
-          <el-switch v-model="missingOnly" active-text="仅看缺集" @change="fetchTvMissingStatus" />
-          <el-button type="primary" :loading="missingLoading" @click="fetchTvMissingStatus">
+          <el-switch v-model="missingOnly" active-text="仅看缺集" @change="() => fetchTvMissingStatus(false)" />
+          <el-button type="primary" :loading="missingLoading" @click="() => fetchTvMissingStatus(true)">
             刷新缺集状态
           </el-button>
         </template>
@@ -279,11 +279,13 @@ const formatMissingBySeason = (missingBySeason) => {
   return segments.length > 0 ? segments.join(' | ') : '-'
 }
 
-const fetchTvMissingStatus = async () => {
+const fetchTvMissingStatus = async (refresh = false) => {
   missingLoading.value = true
   try {
     const params = {
-      only_missing: missingOnly.value
+      only_missing: missingOnly.value,
+      limit: 120,
+      refresh: refresh === true
     }
     const { data } = await subscriptionApi.getTvMissingStatus(params)
     const rows = Array.isArray(data?.items) ? data.items : []
@@ -299,7 +301,7 @@ const refreshMissingRow = async (row) => {
   const subscriptionId = Number(row?.subscription_id)
   if (!Number.isFinite(subscriptionId) || subscriptionId <= 0) return
   try {
-    const { data } = await subscriptionApi.getSubscriptionTvMissingStatus(subscriptionId)
+    const { data } = await subscriptionApi.getSubscriptionTvMissingStatus(subscriptionId, { refresh: true })
     const counts = data?.counts || {}
     const nextRow = {
       subscription_id: data?.subscription_id,
