@@ -77,6 +77,93 @@ class EmbyService:
                     "episodes": set(),
                 }
 
+    async def get_tv_episode_status_by_tmdb(self, tmdb_id: int) -> dict[str, Any]:
+        """
+        基于 Emby API 直接获取剧集已入库/缺失集信息。
+        """
+        if not self.base_url or not self.api_key:
+            return {
+                "status": "not_configured",
+                "message": "Emby 未配置",
+                "existing_episodes": set(),
+                "missing_episodes": set(),
+            }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                series_ids = await self._find_series_ids_by_tmdb(client, tmdb_id)
+                if not series_ids:
+                    return {
+                        "status": "ok",
+                        "message": "Emby 中未匹配到该 TMDB 剧集",
+                        "existing_episodes": set(),
+                        "missing_episodes": set(),
+                    }
+
+                series_id_set = set(series_ids)
+                existing_episodes: set[tuple[int, int]] = set()
+                for series_id in series_ids:
+                    episodes = await self._fetch_items(
+                        client,
+                        {
+                            "ParentId": series_id,
+                            "IncludeItemTypes": "Episode",
+                            "Recursive": "true",
+                            "Fields": "ParentIndexNumber,IndexNumber,IndexNumberEnd,SeriesId",
+                        },
+                    )
+                    for pair in self._extract_episode_pairs(episodes):
+                        existing_episodes.add(pair)
+
+                # Emby 缺集接口；若服务端不支持则返回 partial，避免误报。
+                missing_episodes: set[tuple[int, int]] = set()
+                partial_message = ""
+                try:
+                    for series_id in series_ids:
+                        missing_items = await self._fetch_items_by_endpoint(
+                            client,
+                            "/emby/Shows/Missing",
+                            {
+                                "ParentId": series_id,
+                                "Recursive": "true",
+                                "Fields": "ParentIndexNumber,IndexNumber,IndexNumberEnd,SeriesId",
+                            },
+                            timeout=2.5,
+                        )
+                        for item in missing_items:
+                            if not isinstance(item, dict):
+                                continue
+                            item_series_id = str(item.get("SeriesId") or "").strip()
+                            if item_series_id and item_series_id not in series_id_set:
+                                continue
+                            for pair in self._extract_episode_pairs([item]):
+                                missing_episodes.add(pair)
+                except Exception as exc:
+                    partial_message = f"Emby 缺集接口不可用: {exc.__class__.__name__}: {str(exc)}"
+
+                if partial_message:
+                    return {
+                        "status": "partial",
+                        "message": partial_message,
+                        "existing_episodes": existing_episodes,
+                        "missing_episodes": set(),
+                    }
+
+                return {
+                    "status": "ok",
+                    "message": "查询成功",
+                    "existing_episodes": existing_episodes,
+                    "missing_episodes": missing_episodes,
+                }
+            except Exception as e:
+                print(f"Error fetching tv status from Emby: {e}")
+                return {
+                    "status": "request_failed",
+                    "message": str(e),
+                    "existing_episodes": set(),
+                    "missing_episodes": set(),
+                }
+
     async def _find_series_ids_by_tmdb(self, client: httpx.AsyncClient, tmdb_id: int) -> list[str]:
         target = str(int(tmdb_id))
         series_items = await self._fetch_items(
@@ -105,6 +192,17 @@ class EmbyService:
         for item in series_items:
             if not isinstance(item, dict):
                 continue
+            provider_ids = item.get("ProviderIds")
+            if not isinstance(provider_ids, dict):
+                provider_ids = {}
+            provider_tmdb = str(
+                provider_ids.get("Tmdb")
+                or provider_ids.get("TMDB")
+                or provider_ids.get("tmdb")
+                or ""
+            ).strip()
+            if provider_tmdb != target:
+                continue
             series_id = str(item.get("Id") or "").strip()
             if not series_id or series_id in seen:
                 continue
@@ -113,10 +211,19 @@ class EmbyService:
         return series_ids
 
     async def _fetch_items(self, client: httpx.AsyncClient, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return await self._fetch_items_by_endpoint(client, "/emby/Items", params)
+
+    async def _fetch_items_by_endpoint(
+        self,
+        client: httpx.AsyncClient,
+        endpoint: str,
+        params: dict[str, Any],
+        timeout: float = 15.0,
+    ) -> list[dict[str, Any]]:
         if not self.base_url or not self.api_key:
             return []
 
-        url = f"{self.base_url}/emby/Items"
+        url = f"{self.base_url}{endpoint}"
         start_index = 0
         limit = 200
         merged: list[dict[str, Any]] = []
@@ -125,7 +232,7 @@ class EmbyService:
             query["api_key"] = self.api_key
             query["StartIndex"] = start_index
             query["Limit"] = limit
-            response = await client.get(url, params=query, timeout=15.0)
+            response = await client.get(url, params=query, timeout=timeout)
             response.raise_for_status()
             payload = response.json() if response.content else {}
             if not isinstance(payload, dict):
@@ -145,6 +252,23 @@ class EmbyService:
             if len(dict_rows) < limit:
                 break
         return merged
+
+    def _extract_episode_pairs(self, items: list[dict[str, Any]]) -> set[tuple[int, int]]:
+        pairs: set[tuple[int, int]] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            episode_start = self._safe_int(item.get("IndexNumber"))
+            if episode_start is None or episode_start <= 0:
+                continue
+            season = self._safe_int(item.get("ParentIndexNumber"), default=1)
+            season_number = season if season is not None and season >= 0 else 1
+            episode_end = self._safe_int(item.get("IndexNumberEnd"), default=episode_start)
+            if episode_end is None or episode_end < episode_start:
+                episode_end = episode_start
+            for episode_number in range(episode_start, episode_end + 1):
+                pairs.add((season_number, episode_number))
+        return pairs
 
     @staticmethod
     def _safe_int(value: Any, default: int | None = None) -> int | None:
