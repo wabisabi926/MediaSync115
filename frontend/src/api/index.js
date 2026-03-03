@@ -58,10 +58,14 @@ export const searchApi = {
   getExplorePopularSections: (limit = 24, refresh = false) =>
     api.get('/search/explore/popular-sections', { params: { limit, refresh } }),
   getMovie: (tmdbId) => api.get(`/search/movie/${tmdbId}`),
-  getMoviePan115: (tmdbId, page = 1) => api.get(`/search/movie/${tmdbId}/115`, { params: { page } }),
-  getMoviePan115Pansou: (tmdbId, page = 1) => api.get(`/search/movie/${tmdbId}/115/pansou`, { params: { page } }),
-  getMoviePan115Hdhive: (tmdbId, page = 1) => api.get(`/search/movie/${tmdbId}/115/hdhive`, { params: { page } }),
-  getMoviePan115Tg: (tmdbId, page = 1) => api.get(`/search/movie/${tmdbId}/115/tg`, { params: { page } }),
+  getMoviePan115: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/movie/${tmdbId}/115`, { params: { page, refresh } }),
+  getMoviePan115Pansou: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/movie/${tmdbId}/115/pansou`, { params: { page, refresh } }),
+  getMoviePan115Hdhive: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/movie/${tmdbId}/115/hdhive`, { params: { page, refresh } }),
+  getMoviePan115Tg: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/movie/${tmdbId}/115/tg`, { params: { page, refresh } }),
   getHdhivePan115ByKeyword: (keyword, mediaType = 'movie') =>
     api.get('/search/hdhive/115/by-keyword', { params: { keyword, media_type: mediaType } }),
   getTgPan115ByKeyword: (keyword, mediaType = 'movie') =>
@@ -83,10 +87,14 @@ export const searchApi = {
   getMovieVideo: (tmdbId) => api.get(`/search/movie/${tmdbId}/video`),
 
   getTv: (tmdbId) => api.get(`/search/tv/${tmdbId}`),
-  getTvPan115: (tmdbId, page = 1) => api.get(`/search/tv/${tmdbId}/115`, { params: { page } }),
-  getTvPan115Pansou: (tmdbId, page = 1) => api.get(`/search/tv/${tmdbId}/115/pansou`, { params: { page } }),
-  getTvPan115Hdhive: (tmdbId, page = 1) => api.get(`/search/tv/${tmdbId}/115/hdhive`, { params: { page } }),
-  getTvPan115Tg: (tmdbId, page = 1) => api.get(`/search/tv/${tmdbId}/115/tg`, { params: { page } }),
+  getTvPan115: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/tv/${tmdbId}/115`, { params: { page, refresh } }),
+  getTvPan115Pansou: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/tv/${tmdbId}/115/pansou`, { params: { page, refresh } }),
+  getTvPan115Hdhive: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/tv/${tmdbId}/115/hdhive`, { params: { page, refresh } }),
+  getTvPan115Tg: (tmdbId, page = 1, refresh = false) =>
+    api.get(`/search/tv/${tmdbId}/115/tg`, { params: { page, refresh } }),
 
   getTvSeason: (tmdbId, seasonNumber) => api.get(`/search/tv/${tmdbId}/season/${seasonNumber}`),
   getTvSeasonMagnet: (tmdbId, seasonNumber) => api.get(`/search/tv/${tmdbId}/season/${seasonNumber}/magnet`),

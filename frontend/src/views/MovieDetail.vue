@@ -38,6 +38,15 @@
           <el-tabs v-model="pan115SourceTab" class="source-tabs">
             <el-tab-pane label="Nullbr" name="nullbr">
               <div v-loading="pan115Loading">
+                <div v-if="pan115Diagnostics.nullbr.visible" class="resource-diagnostics">
+                  <span class="diag-title">诊断</span>
+                  <span v-if="pan115Diagnostics.nullbr.error" class="diag-error">
+                    {{ pan115Diagnostics.nullbr.error }}
+                  </span>
+                  <span v-else class="diag-meta">
+                    {{ pan115Diagnostics.nullbr.attemptText || '已完成查询' }}
+                  </span>
+                </div>
                 <el-table 
                   v-if="nullbrPan115Resources.length > 0" 
                   :data="pagedNullbrPan115Resources" 
@@ -98,12 +107,24 @@
                   type="primary"
                   plain
                   :loading="pansouLoading"
-                  @click="handleFetchPansouPan115"
+                  @click="handleFetchPansouPan115(true)"
                 >
                   {{ pansouTried ? '重新尝试 Pansou' : '用 Pansou 获取资源' }}
                 </el-button>
               </div>
               <div v-loading="pan115Loading || pansouLoading">
+                <div v-if="pan115Diagnostics.pansou.visible" class="resource-diagnostics">
+                  <span class="diag-title">诊断</span>
+                  <span v-if="pan115Diagnostics.pansou.keyword" class="diag-meta">
+                    命中关键词: {{ pan115Diagnostics.pansou.keyword }}
+                  </span>
+                  <span v-if="pan115Diagnostics.pansou.attemptText" class="diag-meta">
+                    {{ pan115Diagnostics.pansou.attemptText }}
+                  </span>
+                  <span v-if="pan115Diagnostics.pansou.error" class="diag-error">
+                    {{ pan115Diagnostics.pansou.error }}
+                  </span>
+                </div>
                 <el-table 
                   v-if="pansouPan115Resources.length > 0" 
                   :data="pagedPansouPan115Resources" 
@@ -174,12 +195,21 @@
                   type="primary"
                   plain
                   :loading="hdhiveLoading"
-                  @click="handleFetchHdhivePan115"
+                  @click="handleFetchHdhivePan115(true)"
                 >
                   {{ hdhiveTried ? '刷新 HDHive' : '用 HDHive 获取资源' }}
                 </el-button>
               </div>
               <div v-loading="pan115Loading || hdhiveLoading">
+                <div v-if="pan115Diagnostics.hdhive.visible" class="resource-diagnostics">
+                  <span class="diag-title">诊断</span>
+                  <span v-if="pan115Diagnostics.hdhive.attemptText" class="diag-meta">
+                    {{ pan115Diagnostics.hdhive.attemptText }}
+                  </span>
+                  <span v-if="pan115Diagnostics.hdhive.error" class="diag-error">
+                    {{ pan115Diagnostics.hdhive.error }}
+                  </span>
+                </div>
                 <el-table
                   v-if="hdhivePan115Resources.length > 0"
                   :data="pagedHdhivePan115Resources"
@@ -261,13 +291,25 @@
                   type="primary"
                   plain
                   :loading="tgLoading"
-                  @click="handleFetchTgPan115"
+                  @click="handleFetchTgPan115(true)"
                 >
                   {{ tgTried ? '刷新 Telegram' : '用 Telegram 获取资源' }}
                 </el-button>
               </div>
               <div v-loading="pan115Loading || tgLoading">
-                <el-table
+                <div v-if="pan115Diagnostics.tg.visible" class="resource-diagnostics">
+                  <span class="diag-title">诊断</span>
+                  <span v-if="pan115Diagnostics.tg.keyword" class="diag-meta">
+                    命中关键词: {{ pan115Diagnostics.tg.keyword }}
+                  </span>
+                  <span v-if="pan115Diagnostics.tg.attemptText" class="diag-meta">
+                    {{ pan115Diagnostics.tg.attemptText }}
+                  </span>
+                  <span v-if="pan115Diagnostics.tg.error" class="diag-error">
+                    {{ pan115Diagnostics.tg.error }}
+                  </span>
+                </div>
+                <el-table 
                   v-if="tgPan115Resources.length > 0"
                   :data="pagedTgPan115Resources"
                   stripe
@@ -478,6 +520,12 @@ const PAN115_CACHE_TTL_MS = 30 * 60 * 1000
 // 转存相关
 const saving = ref(false)
 const hdhiveUnlockingSlugs = ref(new Set())
+const pan115Diagnostics = ref({
+  nullbr: { visible: false, keyword: '', attemptText: '', error: '' },
+  pansou: { visible: false, keyword: '', attemptText: '', error: '' },
+  hdhive: { visible: false, keyword: '', attemptText: '', error: '' },
+  tg: { visible: false, keyword: '', attemptText: '', error: '' }
+})
 
 const getPosterUrl = (path) => {
   if (!path) return new URL('/no-poster.png', import.meta.url).href
@@ -485,6 +533,47 @@ const getPosterUrl = (path) => {
 }
 
 const getPan115CacheKey = () => `movie_pan115_${route.params.id}`
+
+const resetPan115Diagnostics = () => {
+  pan115Diagnostics.value = {
+    nullbr: { visible: false, keyword: '', attemptText: '', error: '' },
+    pansou: { visible: false, keyword: '', attemptText: '', error: '' },
+    hdhive: { visible: false, keyword: '', attemptText: '', error: '' },
+    tg: { visible: false, keyword: '', attemptText: '', error: '' }
+  }
+}
+
+const buildAttemptText = (attempts) => {
+  if (!Array.isArray(attempts) || attempts.length === 0) return ''
+  const pieces = attempts.slice(0, 8).map((item) => {
+    const service = String(item?.service || '').trim() || 'unknown'
+    const status = String(item?.status || '').trim() || 'unknown'
+    const keyword = String(item?.keyword || '').trim()
+    const count = Number(item?.count || 0)
+    if (status === 'ok') {
+      return keyword ? `${service}(${keyword})=${count}` : `${service}=${count}`
+    }
+    const error = String(item?.error || '').trim()
+    if (keyword) return `${service}(${keyword})失败${error ? `:${error}` : ''}`
+    return `${service}失败${error ? `:${error}` : ''}`
+  })
+  return pieces.join(' | ')
+}
+
+const updatePan115Diagnostics = (source, payload = {}) => {
+  const normalizedSource = String(source || '').trim()
+  if (!pan115Diagnostics.value[normalizedSource]) return
+  const keyword = String(payload?.keyword || '').trim()
+  const attempts = Array.isArray(payload?.attempts) ? payload.attempts : []
+  const attemptText = buildAttemptText(attempts)
+  const error = String(payload?.error || '').trim()
+  pan115Diagnostics.value[normalizedSource] = {
+    visible: true,
+    keyword,
+    attemptText,
+    error
+  }
+}
 
 const readPan115Cache = () => {
   try {
@@ -779,6 +868,7 @@ const fetchPan115 = async () => {
   try {
     const { data } = await searchApi.getMoviePan115(route.params.id)
     const nullbrList = Array.isArray(data.list) ? data.list : []
+    updatePan115Diagnostics('nullbr', data)
     const cachedPansouList = pan115Resources.value.filter((item) => item?.source_service === 'pansou')
     const cachedHdhiveList = pan115Resources.value.filter((item) => item?.source_service === 'hdhive')
     const cachedTgList = pan115Resources.value.filter((item) => item?.source_service === 'tg')
@@ -797,12 +887,13 @@ const fetchPan115 = async () => {
   }
 }
 
-const handleFetchPansouPan115 = async () => {
+const handleFetchPansouPan115 = async (forceRefresh = false) => {
   if (pansouLoading.value) return
   pansouLoading.value = true
   pansouTried.value = true
   try {
-    const { data } = await searchApi.getMoviePan115Pansou(route.params.id)
+    const { data } = await searchApi.getMoviePan115Pansou(route.params.id, 1, forceRefresh)
+    updatePan115Diagnostics('pansou', data)
     const pansouList = Array.isArray(data.list) ? data.list : []
     const mergedList = mergePan115Resources(pan115Resources.value, pansouList)
     pan115Resources.value = mergedList
@@ -817,12 +908,13 @@ const handleFetchPansouPan115 = async () => {
   }
 }
 
-const handleFetchHdhivePan115 = async () => {
+const handleFetchHdhivePan115 = async (forceRefresh = false) => {
   if (hdhiveLoading.value) return
   hdhiveLoading.value = true
   hdhiveTried.value = true
   try {
-    const { data } = await searchApi.getMoviePan115Hdhive(route.params.id)
+    const { data } = await searchApi.getMoviePan115Hdhive(route.params.id, 1, forceRefresh)
+    updatePan115Diagnostics('hdhive', data)
     let hdhiveList = Array.isArray(data.list) ? data.list : []
     hdhiveList = hdhiveList.map((item) => ({ ...item, source_service: item?.source_service || 'hdhive' }))
 
@@ -857,12 +949,13 @@ const handleFetchHdhivePan115 = async () => {
   }
 }
 
-const handleFetchTgPan115 = async () => {
+const handleFetchTgPan115 = async (forceRefresh = false) => {
   if (tgLoading.value) return
   tgLoading.value = true
   tgTried.value = true
   try {
-    const { data } = await searchApi.getMoviePan115Tg(route.params.id)
+    const { data } = await searchApi.getMoviePan115Tg(route.params.id, 1, forceRefresh)
+    updatePan115Diagnostics('tg', data)
     const tgList = Array.isArray(data.list) ? data.list : []
     const mergedList = mergePan115Resources(pan115Resources.value, tgList)
     pan115Resources.value = mergedList
@@ -1217,6 +1310,7 @@ watch(pan115SourceTab, (tab) => {
 
 watch(() => route.params.id, () => {
   resetSeedhubTaskState()
+  resetPan115Diagnostics()
   pan115SourceTab.value = 'nullbr'
   magnetSourceTab.value = 'nullbr'
   pan115Resources.value = []
@@ -1237,6 +1331,7 @@ watch(() => route.params.id, () => {
 })
 
 onMounted(() => {
+  resetPan115Diagnostics()
   fetchMovie()
   fetchPan115()
   checkSubscribed()
@@ -1389,6 +1484,30 @@ onBeforeUnmount(() => {
     
     :deep(.el-tabs__content) {
       padding: 16px 0 0;
+    }
+  }
+
+  .resource-diagnostics {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ms-text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .diag-title {
+      font-weight: 600;
+      color: var(--ms-text-primary);
+    }
+
+    .diag-meta {
+      color: var(--ms-text-secondary);
+    }
+
+    .diag-error {
+      color: var(--ms-danger, #e45656);
+      word-break: break-word;
     }
   }
 

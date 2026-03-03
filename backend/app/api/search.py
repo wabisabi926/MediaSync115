@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 POPULAR_MOVIES_URL = "https://popular-movies-data.stevenlu.com/movies.json"
 POPULAR_CACHE_TTL_SECONDS = 60 * 60 * 6
 PAN115_CACHE_TTL_SECONDS = 60 * 30
+PAN115_EMPTY_CACHE_TTL_SECONDS = 90
 POPULAR_SECTION_SOURCES = [
     {
         "key": "popular",
@@ -349,6 +350,10 @@ def _normalize_keyword_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _strip_keyword_punctuation(value: str) -> str:
+    return re.sub(r"[\s\-_·:：,.，。!！?？'\"“”‘’()（）\[\]【】/\\]+", "", value or "")
+
+
 def _build_pansou_keyword_candidates(payload: dict, media_type: str, tmdb_id: int) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
@@ -383,6 +388,25 @@ def _build_pansou_keyword_candidates(payload: dict, media_type: str, tmdb_id: in
     if original_title and year:
         add_keyword(f"{original_title} {year}")
     add_keyword(original_title)
+
+    if media_type != "tv":
+        # Movie-specific fallback variants: de-yeared / punctuation-stripped / subtitle split.
+        for raw_title in [title, original_title]:
+            base = _normalize_keyword_text(raw_title)
+            if not base:
+                continue
+            if year:
+                no_year = _normalize_keyword_text(base.replace(year, ""))
+                add_keyword(no_year)
+            add_keyword(_strip_keyword_punctuation(base))
+            for separator in [":", "：", "-", "·"]:
+                if separator not in base:
+                    continue
+                left, right = [part.strip() for part in base.split(separator, 1)]
+                add_keyword(left)
+                add_keyword(right)
+                if year and left:
+                    add_keyword(f"{left} {year}")
 
     # Last fallback keeps behavior deterministic when TMDB title is missing.
     add_keyword(f"TMDB {tmdb_id}")
@@ -613,6 +637,17 @@ def _set_cached_payload(cache: dict, key: str, payload: dict, ttl_seconds: int):
         "payload": payload,
         "expires_at": time.time() + ttl_seconds,
     }
+
+
+def _resolve_pan115_cache_ttl_seconds(resource_list: list[dict]) -> int:
+    return PAN115_CACHE_TTL_SECONDS if resource_list else PAN115_EMPTY_CACHE_TTL_SECONDS
+
+
+def _set_pan115_cached_payload(cache: dict, key: str, payload: dict) -> None:
+    resources = payload.get("list") if isinstance(payload, dict) else []
+    resource_list = resources if isinstance(resources, list) else []
+    ttl_seconds = _resolve_pan115_cache_ttl_seconds(resource_list)
+    _set_cached_payload(cache, key, payload, ttl_seconds)
 
 
 def _find_douban_source(section_key: str):
@@ -1168,6 +1203,8 @@ def _build_pan115_response(
     source_counts: Optional[dict[str, int]] = None,
     attempts: Optional[list[dict[str, Any]]] = None,
     keyword: str = "",
+    attempted_keywords: Optional[list[str]] = None,
+    keyword_hit_index: Optional[int] = None,
 ) -> dict[str, Any]:
     return {
         "id": tmdb_id,
@@ -1180,6 +1217,8 @@ def _build_pan115_response(
         "source_counts": source_counts or {},
         "attempts": attempts or [],
         "keyword": keyword,
+        "attempted_keywords": attempted_keywords or [],
+        "keyword_hit_index": keyword_hit_index,
     }
 
 
@@ -1407,33 +1446,71 @@ async def _load_media_payload(tmdb_id: int, media_type: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-async def _search_pansou_pan115_resources(tmdb_id: int, media_type: str) -> tuple[str, list[dict]]:
+async def _search_pansou_pan115_resources(tmdb_id: int, media_type: str) -> dict[str, Any]:
     pansou_service.set_base_url(runtime_settings_service.get_pansou_base_url())
     media_payload = await _load_media_payload(tmdb_id, media_type)
 
     keyword_candidates = _build_pansou_keyword_candidates(media_payload, media_type, tmdb_id)
     selected_keyword = keyword_candidates[0] if keyword_candidates else f"TMDB {tmdb_id}"
+    attempted_keywords: list[str] = []
+    attempts: list[dict[str, Any]] = []
 
     for keyword in keyword_candidates:
-        pansou_payload = await pansou_service.search_115(keyword, res="results")
-        pansou_list = _normalize_pansou_pan115_list(pansou_payload)
-        if pansou_list:
-            return keyword, pansou_list
+        attempted_keywords.append(keyword)
+        try:
+            pansou_payload = await pansou_service.search_115(keyword, res="results")
+            pansou_list = _normalize_pansou_pan115_list(pansou_payload)
+            attempts.append({"service": "pansou", "keyword": keyword, "status": "ok", "count": len(pansou_list)})
+            if pansou_list:
+                return {
+                    "keyword": keyword,
+                    "list": pansou_list,
+                    "attempted_keywords": attempted_keywords,
+                    "keyword_hit_index": len(attempted_keywords) - 1,
+                    "attempts": attempts,
+                }
+        except Exception as exc:
+            attempts.append({"service": "pansou", "keyword": keyword, "status": "error", "error": str(exc)})
 
-    return selected_keyword, []
+    return {
+        "keyword": selected_keyword,
+        "list": [],
+        "attempted_keywords": attempted_keywords,
+        "keyword_hit_index": None,
+        "attempts": attempts,
+    }
 
 
-async def _search_tg_pan115_resources(tmdb_id: int, media_type: str) -> tuple[str, list[dict]]:
+async def _search_tg_pan115_resources(tmdb_id: int, media_type: str) -> dict[str, Any]:
     media_payload = await _load_media_payload(tmdb_id, media_type)
     keyword_candidates = _build_pansou_keyword_candidates(media_payload, media_type, tmdb_id)
     selected_keyword = keyword_candidates[0] if keyword_candidates else f"TMDB {tmdb_id}"
+    attempted_keywords: list[str] = []
+    attempts: list[dict[str, Any]] = []
 
     for keyword in keyword_candidates:
-        tg_list = await tg_service.search_115_by_keyword(keyword, media_type=media_type)
-        tg_list = _mark_tg_pan115_source(tg_list)
-        if tg_list:
-            return keyword, tg_list
-    return selected_keyword, []
+        attempted_keywords.append(keyword)
+        try:
+            tg_list = await tg_service.search_115_by_keyword(keyword, media_type=media_type)
+            tg_list = _mark_tg_pan115_source(tg_list)
+            attempts.append({"service": "tg", "keyword": keyword, "status": "ok", "count": len(tg_list)})
+            if tg_list:
+                return {
+                    "keyword": keyword,
+                    "list": tg_list,
+                    "attempted_keywords": attempted_keywords,
+                    "keyword_hit_index": len(attempted_keywords) - 1,
+                    "attempts": attempts,
+                }
+        except Exception as exc:
+            attempts.append({"service": "tg", "keyword": keyword, "status": "error", "error": str(exc)})
+    return {
+        "keyword": selected_keyword,
+        "list": [],
+        "attempted_keywords": attempted_keywords,
+        "keyword_hit_index": None,
+        "attempts": attempts,
+    }
 
 
 async def _search_seedhub_magnet_resources(tmdb_id: int, media_type: str) -> tuple[str, list[dict]]:
@@ -1513,11 +1590,16 @@ async def cancel_seedhub_magnet_task(task_id: str):
 
 
 @router.get("/movie/{tmdb_id}/115")
-async def get_movie_pan115(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_movie_pan115(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:nullbr"
-    cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
     attempts: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
@@ -1545,26 +1627,28 @@ async def get_movie_pan115(tmdb_id: int, page: int = Query(1, ge=1)):
     )
     result["can_try_pansou"] = True
 
-    _set_cached_payload(_movie_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_movie_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/movie/{tmdb_id}/115/pansou")
-async def get_movie_pan115_with_pansou(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_movie_pan115_with_pansou(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:pansou"
-    cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
-    attempts: list[dict[str, Any]] = []
-    pansou_list: list[dict] = []
-    pansou_keyword = ""
-
-    try:
-        pansou_keyword, pansou_list = await _search_pansou_pan115_resources(tmdb_id, "movie")
-        attempts.append({"service": "pansou", "status": "ok", "count": len(pansou_list)})
-    except Exception as exc:
-        attempts.append({"service": "pansou", "status": "error", "error": str(exc)})
+    search_result = await _search_pansou_pan115_resources(tmdb_id, "movie")
+    pansou_list: list[dict] = list(search_result.get("list") or [])
+    pansou_keyword = str(search_result.get("keyword") or "")
+    attempts = list(search_result.get("attempts") or [])
+    attempted_keywords = list(search_result.get("attempted_keywords") or [])
+    keyword_hit_index = search_result.get("keyword_hit_index")
 
     source_counts = {"pansou": len(pansou_list)} if pansou_list else {}
     result = _build_pan115_response(
@@ -1576,18 +1660,25 @@ async def get_movie_pan115_with_pansou(tmdb_id: int, page: int = Query(1, ge=1))
         source_counts=source_counts,
         attempts=attempts,
         keyword=pansou_keyword,
+        attempted_keywords=attempted_keywords,
+        keyword_hit_index=keyword_hit_index,
     )
 
-    _set_cached_payload(_movie_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_movie_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/movie/{tmdb_id}/115/hdhive")
-async def get_movie_pan115_with_hdhive(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_movie_pan115_with_hdhive(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:hdhive"
-    cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
     attempts: list[dict[str, Any]] = []
     hdhive_list: list[dict] = []
@@ -1608,25 +1699,28 @@ async def get_movie_pan115_with_hdhive(tmdb_id: int, page: int = Query(1, ge=1))
         source_counts=source_counts,
         attempts=attempts,
     )
-    _set_cached_payload(_movie_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_movie_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/movie/{tmdb_id}/115/tg")
-async def get_movie_pan115_with_tg(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_movie_pan115_with_tg(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:tg"
-    cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_movie_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
-    attempts: list[dict[str, Any]] = []
-    tg_list: list[dict] = []
-    tg_keyword = ""
-    try:
-        tg_keyword, tg_list = await _search_tg_pan115_resources(tmdb_id, "movie")
-        attempts.append({"service": "tg", "status": "ok", "count": len(tg_list)})
-    except Exception as exc:
-        attempts.append({"service": "tg", "status": "error", "error": str(exc)})
+    search_result = await _search_tg_pan115_resources(tmdb_id, "movie")
+    tg_list: list[dict] = list(search_result.get("list") or [])
+    tg_keyword = str(search_result.get("keyword") or "")
+    attempts = list(search_result.get("attempts") or [])
+    attempted_keywords = list(search_result.get("attempted_keywords") or [])
+    keyword_hit_index = search_result.get("keyword_hit_index")
 
     source_counts = {"tg": len(tg_list)} if tg_list else {}
     result = _build_pan115_response(
@@ -1638,8 +1732,10 @@ async def get_movie_pan115_with_tg(tmdb_id: int, page: int = Query(1, ge=1)):
         source_counts=source_counts,
         attempts=attempts,
         keyword=tg_keyword,
+        attempted_keywords=attempted_keywords,
+        keyword_hit_index=keyword_hit_index,
     )
-    _set_cached_payload(_movie_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_movie_pan115_cache, cache_key, result)
     return result
 
 
@@ -1715,11 +1811,16 @@ async def get_tv(tmdb_id: int):
 
 
 @router.get("/tv/{tmdb_id}/115")
-async def get_tv_pan115(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_tv_pan115(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:nullbr"
-    cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
     attempts: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
@@ -1747,26 +1848,28 @@ async def get_tv_pan115(tmdb_id: int, page: int = Query(1, ge=1)):
     )
     result["can_try_pansou"] = True
 
-    _set_cached_payload(_tv_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_tv_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/tv/{tmdb_id}/115/pansou")
-async def get_tv_pan115_with_pansou(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_tv_pan115_with_pansou(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:pansou"
-    cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
-    attempts: list[dict[str, Any]] = []
-    pansou_list: list[dict] = []
-    pansou_keyword = ""
-
-    try:
-        pansou_keyword, pansou_list = await _search_pansou_pan115_resources(tmdb_id, "tv")
-        attempts.append({"service": "pansou", "status": "ok", "count": len(pansou_list)})
-    except Exception as exc:
-        attempts.append({"service": "pansou", "status": "error", "error": str(exc)})
+    search_result = await _search_pansou_pan115_resources(tmdb_id, "tv")
+    pansou_list: list[dict] = list(search_result.get("list") or [])
+    pansou_keyword = str(search_result.get("keyword") or "")
+    attempts = list(search_result.get("attempts") or [])
+    attempted_keywords = list(search_result.get("attempted_keywords") or [])
+    keyword_hit_index = search_result.get("keyword_hit_index")
 
     source_counts = {"pansou": len(pansou_list)} if pansou_list else {}
     result = _build_pan115_response(
@@ -1778,18 +1881,25 @@ async def get_tv_pan115_with_pansou(tmdb_id: int, page: int = Query(1, ge=1)):
         source_counts=source_counts,
         attempts=attempts,
         keyword=pansou_keyword,
+        attempted_keywords=attempted_keywords,
+        keyword_hit_index=keyword_hit_index,
     )
 
-    _set_cached_payload(_tv_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_tv_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/tv/{tmdb_id}/115/hdhive")
-async def get_tv_pan115_with_hdhive(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_tv_pan115_with_hdhive(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:hdhive"
-    cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
     attempts: list[dict[str, Any]] = []
     hdhive_list: list[dict] = []
@@ -1810,25 +1920,28 @@ async def get_tv_pan115_with_hdhive(tmdb_id: int, page: int = Query(1, ge=1)):
         source_counts=source_counts,
         attempts=attempts,
     )
-    _set_cached_payload(_tv_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_tv_pan115_cache, cache_key, result)
     return result
 
 
 @router.get("/tv/{tmdb_id}/115/tg")
-async def get_tv_pan115_with_tg(tmdb_id: int, page: int = Query(1, ge=1)):
+async def get_tv_pan115_with_tg(
+    tmdb_id: int,
+    page: int = Query(1, ge=1),
+    refresh: bool = Query(False, description="是否绕过缓存"),
+):
     cache_key = f"{tmdb_id}:{page}:tg"
-    cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
-    if is_fresh:
-        return cached_payload
+    if not refresh:
+        cached_payload, is_fresh = _get_cached_payload(_tv_pan115_cache, cache_key)
+        if is_fresh:
+            return cached_payload
 
-    attempts: list[dict[str, Any]] = []
-    tg_list: list[dict] = []
-    tg_keyword = ""
-    try:
-        tg_keyword, tg_list = await _search_tg_pan115_resources(tmdb_id, "tv")
-        attempts.append({"service": "tg", "status": "ok", "count": len(tg_list)})
-    except Exception as exc:
-        attempts.append({"service": "tg", "status": "error", "error": str(exc)})
+    search_result = await _search_tg_pan115_resources(tmdb_id, "tv")
+    tg_list: list[dict] = list(search_result.get("list") or [])
+    tg_keyword = str(search_result.get("keyword") or "")
+    attempts = list(search_result.get("attempts") or [])
+    attempted_keywords = list(search_result.get("attempted_keywords") or [])
+    keyword_hit_index = search_result.get("keyword_hit_index")
 
     source_counts = {"tg": len(tg_list)} if tg_list else {}
     result = _build_pan115_response(
@@ -1840,8 +1953,10 @@ async def get_tv_pan115_with_tg(tmdb_id: int, page: int = Query(1, ge=1)):
         source_counts=source_counts,
         attempts=attempts,
         keyword=tg_keyword,
+        attempted_keywords=attempted_keywords,
+        keyword_hit_index=keyword_hit_index,
     )
-    _set_cached_payload(_tv_pan115_cache, cache_key, result, PAN115_CACHE_TTL_SECONDS)
+    _set_pan115_cached_payload(_tv_pan115_cache, cache_key, result)
     return result
 
 

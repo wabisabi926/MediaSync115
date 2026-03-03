@@ -593,7 +593,8 @@ class SubscriptionService:
                         "payload": {"tmdb_id": sub.tmdb_id, "media_type": media_type},
                     }
                 )
-                _, pansou_list = await _search_pansou_pan115_resources(sub.tmdb_id, media_type)
+                pansou_result = await _search_pansou_pan115_resources(sub.tmdb_id, media_type)
+                pansou_list = list(pansou_result.get("list") or [])
                 if pansou_list:
                     traces.append(
                         {
