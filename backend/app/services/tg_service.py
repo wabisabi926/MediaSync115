@@ -312,6 +312,86 @@ class TgService:
             return line[:160]
         return fallback
 
+    @staticmethod
+    def _normalize_for_match(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = re.sub(r"[`~!@#$%^&*()_+=\[\]{}\\|;:'\",.<>/?，。！？：；【】（）《》、·\-]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    @staticmethod
+    def _extract_year(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        matched = re.search(r"(19\d{2}|20\d{2})", text)
+        return matched.group(1) if matched else ""
+
+    @staticmethod
+    def _title_tokens(value: str) -> list[str]:
+        normalized = TgService._normalize_for_match(value)
+        if not normalized:
+            return []
+        return [part for part in normalized.split(" ") if part and len(part) >= 2]
+
+    def _score_row_relevance(
+        self,
+        *,
+        row_title: str,
+        row_overview: str,
+        expected_title: str,
+        expected_original_title: str,
+        expected_year: str,
+    ) -> tuple[int, str, bool]:
+        title_norm = self._normalize_for_match(row_title)
+        overview_norm = self._normalize_for_match(row_overview)
+        full_text = f"{title_norm} {overview_norm}".strip()
+        exp_title_norm = self._normalize_for_match(expected_title)
+        exp_original_norm = self._normalize_for_match(expected_original_title)
+        title_tokens = self._title_tokens(expected_title)
+        original_tokens = self._title_tokens(expected_original_title)
+
+        score = 0
+        reasons: list[str] = []
+        strong_hit = False
+
+        if exp_title_norm and exp_title_norm in title_norm:
+            score += 60
+            strong_hit = True
+            reasons.append("title_exact")
+        elif exp_title_norm and exp_title_norm in full_text:
+            score += 45
+            strong_hit = True
+            reasons.append("title_phrase")
+
+        if exp_original_norm and exp_original_norm in title_norm:
+            score += 45
+            strong_hit = True
+            reasons.append("original_exact")
+        elif exp_original_norm and exp_original_norm in full_text:
+            score += 30
+            strong_hit = True
+            reasons.append("original_phrase")
+
+        if title_tokens and all(token in full_text for token in title_tokens):
+            score += 20
+            reasons.append("title_tokens")
+        if original_tokens and all(token in full_text for token in original_tokens):
+            score += 15
+            reasons.append("original_tokens")
+
+        normalized_year = self._extract_year(expected_year)
+        if normalized_year:
+            if normalized_year in full_text:
+                score += 20
+                reasons.append("year")
+            else:
+                score -= 40
+                reasons.append("year_missing")
+        return score, ",".join(reasons) if reasons else "none", strong_hit
+
     def _build_rows_from_message(
         self,
         *,
@@ -643,6 +723,9 @@ class TgService:
         channels: list[str] | None = None,
         search_days: int | None = None,
         max_messages: int | None = None,
+        expected_title: str = "",
+        expected_original_title: str = "",
+        expected_year: str = "",
     ) -> list[dict[str, Any]]:
         normalized_keyword = str(keyword or "").strip()
         if not normalized_keyword:
@@ -665,6 +748,9 @@ class TgService:
                 media_type=normalized_media,
                 channels=target_channels,
                 per_channel_limit=index_query_limit,
+                expected_title=expected_title,
+                expected_original_title=expected_original_title,
+                expected_year=expected_year,
             )
             if indexed_rows:
                 return indexed_rows
@@ -707,6 +793,23 @@ class TgService:
                     )
         finally:
             await client.disconnect()
+        has_context = bool(self._normalize_for_match(expected_title) or self._normalize_for_match(expected_original_title))
+        if has_context:
+            filtered_rows: list[dict[str, Any]] = []
+            for row in rows:
+                score, reason, strong_hit = self._score_row_relevance(
+                    row_title=str(row.get("resource_name") or row.get("title") or ""),
+                    row_overview=str(row.get("overview") or ""),
+                    expected_title=expected_title,
+                    expected_original_title=expected_original_title,
+                    expected_year=expected_year,
+                )
+                if not strong_hit or score < 80:
+                    continue
+                row["tg_relevance_score"] = score
+                row["tg_match_reason"] = reason
+                filtered_rows.append(row)
+            rows = filtered_rows
         if rows and index_enabled:
             try:
                 await tg_index_service.upsert_rows(rows)

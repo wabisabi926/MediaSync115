@@ -9,6 +9,29 @@ from app.models.models import TgMessageIndex, TgSyncState
 
 
 class TgIndexService:
+    _NOISE_WORDS = {
+        "电影",
+        "电视剧",
+        "剧集",
+        "全集",
+        "国语",
+        "中字",
+        "双语",
+        "高清",
+        "超清",
+        "蓝光",
+        "4k",
+        "1080p",
+        "720p",
+        "h265",
+        "x265",
+        "web",
+        "webrip",
+        "bdrip",
+        "dvdrip",
+        "remux",
+    }
+
     @staticmethod
     def _normalize_text(value: Any) -> str:
         text = str(value or "").strip().lower()
@@ -16,6 +39,107 @@ class TgIndexService:
             return ""
         text = re.sub(r"\s+", " ", text)
         return text
+
+    @staticmethod
+    def _normalize_for_match(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = re.sub(r"[`~!@#$%^&*()_+=\[\]{}\\|;:'\",.<>/?，。！？：；【】（）《》、·\-]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    @staticmethod
+    def _title_tokens(value: str) -> list[str]:
+        normalized = TgIndexService._normalize_for_match(value)
+        if not normalized:
+            return []
+        return [part for part in normalized.split(" ") if part and part not in TgIndexService._NOISE_WORDS and len(part) >= 2]
+
+    @staticmethod
+    def _contains_phrase(target: str, phrase: str) -> bool:
+        if not target or not phrase:
+            return False
+        return phrase in target
+
+    @staticmethod
+    def _contains_all_tokens(target: str, tokens: list[str]) -> bool:
+        if not target or not tokens:
+            return False
+        return all(token in target for token in tokens)
+
+    @staticmethod
+    def _extract_year(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        matched = re.search(r"(19\d{2}|20\d{2})", text)
+        if not matched:
+            return ""
+        return matched.group(1)
+
+    def _score_row_relevance(
+        self,
+        *,
+        row_title: str,
+        row_overview: str,
+        expected_title: str,
+        expected_original_title: str,
+        expected_year: str,
+    ) -> tuple[int, str, bool]:
+        title_norm = self._normalize_for_match(row_title)
+        overview_norm = self._normalize_for_match(row_overview)
+        full_text = f"{title_norm} {overview_norm}".strip()
+
+        exp_title_norm = self._normalize_for_match(expected_title)
+        exp_original_norm = self._normalize_for_match(expected_original_title)
+        title_tokens = self._title_tokens(expected_title)
+        original_tokens = self._title_tokens(expected_original_title)
+
+        score = 0
+        reasons: list[str] = []
+        strong_hit = False
+
+        if exp_title_norm and self._contains_phrase(title_norm, exp_title_norm):
+            score += 60
+            strong_hit = True
+            reasons.append("title_exact")
+        elif exp_title_norm and self._contains_phrase(full_text, exp_title_norm):
+            score += 45
+            strong_hit = True
+            reasons.append("title_phrase")
+
+        if exp_original_norm and self._contains_phrase(title_norm, exp_original_norm):
+            score += 45
+            strong_hit = True
+            reasons.append("original_exact")
+        elif exp_original_norm and self._contains_phrase(full_text, exp_original_norm):
+            score += 30
+            strong_hit = True
+            reasons.append("original_phrase")
+
+        if title_tokens and self._contains_all_tokens(full_text, title_tokens):
+            score += 20
+            reasons.append("title_tokens")
+        if original_tokens and self._contains_all_tokens(full_text, original_tokens):
+            score += 15
+            reasons.append("original_tokens")
+
+        normalized_expected_year = self._extract_year(expected_year)
+        if normalized_expected_year:
+            if normalized_expected_year in full_text:
+                score += 20
+                reasons.append("year")
+            else:
+                score -= 40
+                reasons.append("year_missing")
+
+        if "合集" in title_norm or "合集" in overview_norm:
+            score -= 8
+            reasons.append("collection_penalty")
+
+        reason_text = ",".join(reasons) if reasons else "none"
+        return score, reason_text, strong_hit
 
     def _build_search_text(self, row: dict[str, Any]) -> str:
         parts = [
@@ -89,6 +213,9 @@ class TgIndexService:
         media_type: str,
         channels: list[str],
         per_channel_limit: int,
+        expected_title: str = "",
+        expected_original_title: str = "",
+        expected_year: str = "",
     ) -> list[dict[str, Any]]:
         normalized_keyword = self._normalize_text(keyword)
         if not normalized_keyword:
@@ -121,32 +248,54 @@ class TgIndexService:
             records = list(result.scalars().all())
 
         per_channel_count: dict[str, int] = {}
+        scored_rows: list[tuple[int, datetime, dict[str, Any]]] = []
         rows: list[dict[str, Any]] = []
         for record in records:
             channel = str(record.channel_username or "")
             current = per_channel_count.get(channel, 0)
             if current >= raw_limit:
                 continue
-            per_channel_count[channel] = current + 1
-            rows.append(
-                {
-                    "id": f"tg-index-{channel.replace('@', '')}-{record.message_id}-{current}",
-                    "media_type": "resource",
-                    "title": record.resource_name,
-                    "name": record.resource_name,
-                    "resource_name": record.resource_name,
-                    "overview": str(record.message_text or "")[:300],
-                    "poster_path": "",
-                    "source_service": "tg",
-                    "pan115_share_link": record.share_link,
-                    "share_link": record.share_link,
-                    "pan115_savable": True,
-                    "tg_channel": channel,
-                    "tg_message_id": int(record.message_id or 0),
-                    "tg_message_date": record.message_date.isoformat() if record.message_date else "",
-                    "tg_media_type_hint": str(record.media_type_hint or "unknown"),
-                }
+            row_title = str(record.resource_name or "")
+            row_overview = str(record.message_text or "")
+            score, reason, strong_hit = self._score_row_relevance(
+                row_title=row_title,
+                row_overview=row_overview,
+                expected_title=expected_title,
+                expected_original_title=expected_original_title,
+                expected_year=expected_year,
             )
+            has_context = bool(self._normalize_for_match(expected_title) or self._normalize_for_match(expected_original_title))
+            if has_context:
+                if not strong_hit:
+                    continue
+                if score < 80:
+                    continue
+
+            per_channel_count[channel] = current + 1
+            row = {
+                "id": f"tg-index-{channel.replace('@', '')}-{record.message_id}-{current}",
+                "media_type": "resource",
+                "title": record.resource_name,
+                "name": record.resource_name,
+                "resource_name": record.resource_name,
+                "overview": row_overview[:300],
+                "poster_path": "",
+                "source_service": "tg",
+                "pan115_share_link": record.share_link,
+                "share_link": record.share_link,
+                "pan115_savable": True,
+                "tg_channel": channel,
+                "tg_message_id": int(record.message_id or 0),
+                "tg_message_date": record.message_date.isoformat() if record.message_date else "",
+                "tg_media_type_hint": str(record.media_type_hint or "unknown"),
+                "tg_relevance_score": score,
+                "tg_match_reason": reason,
+            }
+            scored_rows.append((score, record.message_date or datetime.min, row))
+
+        scored_rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        for _, _, row in scored_rows:
+            rows.append(row)
         return rows
 
     async def get_status(self, channels: list[str]) -> dict[str, Any]:

@@ -413,6 +413,58 @@ def _build_pansou_keyword_candidates(payload: dict, media_type: str, tmdb_id: in
     return candidates
 
 
+def _build_tg_keyword_candidates(payload: dict, media_type: str, tmdb_id: int) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    if media_type == "tv":
+        title = _normalize_keyword_text(payload.get("name") or payload.get("title"))
+        original_title = _normalize_keyword_text(payload.get("original_name") or payload.get("original_title"))
+        date_like = payload.get("first_air_date") or payload.get("release_date") or payload.get("release")
+    else:
+        title = _normalize_keyword_text(payload.get("title") or payload.get("name"))
+        original_title = _normalize_keyword_text(payload.get("original_title") or payload.get("original_name"))
+        date_like = payload.get("release_date") or payload.get("release")
+
+    year = _extract_year_from_date_like(date_like)
+
+    def add_keyword(keyword: str) -> None:
+        normalized = _normalize_keyword_text(keyword)
+        if not normalized:
+            return
+        fingerprint = normalized.casefold()
+        if fingerprint in seen:
+            return
+        seen.add(fingerprint)
+        candidates.append(normalized)
+
+    if title and year:
+        add_keyword(f"{title} {year}")
+    add_keyword(title)
+    if original_title and year:
+        add_keyword(f"{original_title} {year}")
+    add_keyword(original_title)
+    add_keyword(f"TMDB {tmdb_id}")
+    return candidates
+
+
+def _extract_tg_expected_context(payload: dict, media_type: str) -> dict[str, str]:
+    if media_type == "tv":
+        title = _normalize_keyword_text(payload.get("name") or payload.get("title"))
+        original_title = _normalize_keyword_text(payload.get("original_name") or payload.get("original_title"))
+        date_like = payload.get("first_air_date") or payload.get("release_date") or payload.get("release")
+    else:
+        title = _normalize_keyword_text(payload.get("title") or payload.get("name"))
+        original_title = _normalize_keyword_text(payload.get("original_title") or payload.get("original_name"))
+        date_like = payload.get("release_date") or payload.get("release")
+    year = _extract_year_from_date_like(date_like)
+    return {
+        "expected_title": title,
+        "expected_original_title": original_title,
+        "expected_year": year,
+    }
+
+
 def _build_pansou_keyword_from_media(payload: dict, media_type: str) -> str:
     if not isinstance(payload, dict):
         return ""
@@ -1483,7 +1535,8 @@ async def _search_pansou_pan115_resources(tmdb_id: int, media_type: str) -> dict
 
 async def _search_tg_pan115_resources(tmdb_id: int, media_type: str) -> dict[str, Any]:
     media_payload = await _load_media_payload(tmdb_id, media_type)
-    keyword_candidates = _build_pansou_keyword_candidates(media_payload, media_type, tmdb_id)
+    keyword_candidates = _build_tg_keyword_candidates(media_payload, media_type, tmdb_id)
+    context = _extract_tg_expected_context(media_payload, media_type)
     selected_keyword = keyword_candidates[0] if keyword_candidates else f"TMDB {tmdb_id}"
     attempted_keywords: list[str] = []
     attempts: list[dict[str, Any]] = []
@@ -1491,9 +1544,25 @@ async def _search_tg_pan115_resources(tmdb_id: int, media_type: str) -> dict[str
     for keyword in keyword_candidates:
         attempted_keywords.append(keyword)
         try:
-            tg_list = await tg_service.search_115_by_keyword(keyword, media_type=media_type)
+            tg_list = await tg_service.search_115_by_keyword(
+                keyword,
+                media_type=media_type,
+                expected_title=context.get("expected_title", ""),
+                expected_original_title=context.get("expected_original_title", ""),
+                expected_year=context.get("expected_year", ""),
+            )
             tg_list = _mark_tg_pan115_source(tg_list)
-            attempts.append({"service": "tg", "keyword": keyword, "status": "ok", "count": len(tg_list)})
+            attempts.append(
+                {
+                    "service": "tg",
+                    "keyword": keyword,
+                    "status": "ok",
+                    "count": len(tg_list),
+                    "raw_count": len(tg_list),
+                    "filtered_count": len(tg_list),
+                    "rejected_by_precision": 0,
+                }
+            )
             if tg_list:
                 return {
                     "keyword": keyword,
