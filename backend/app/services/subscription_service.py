@@ -65,6 +65,7 @@ class SubscriptionService:
             "started_at": started_at.isoformat(),
         }
         hdhive_unlock_context = self._build_hdhive_unlock_context()
+        source_order = self._resolve_source_order(normalized_channel)
 
         subs_result = await db.execute(
             select(
@@ -95,7 +96,10 @@ class SubscriptionService:
             step="run_start",
             status="info",
             message=f"任务启动，待处理订阅 {len(subscriptions)} 项",
-            payload={"checked_count": len(subscriptions)},
+            payload={
+                "checked_count": len(subscriptions),
+                "source_order": source_order,
+            },
         )
         if progress_callback:
             await progress_callback(
@@ -130,7 +134,12 @@ class SubscriptionService:
                     status="info",
                     message="开始处理订阅",
                 )
-                resources, fetch_trace = await self._fetch_resources(normalized_channel, sub, hdhive_unlock_context)
+                resources, fetch_trace = await self._fetch_resources(
+                    normalized_channel,
+                    sub,
+                    hdhive_unlock_context,
+                    source_order=source_order,
+                )
                 for trace in fetch_trace:
                     await self._create_step_log(
                         db,
@@ -452,18 +461,29 @@ class SubscriptionService:
         channel: str,
         sub: "SubscriptionSnapshot",
         hdhive_unlock_context: dict[str, Any] | None = None,
+        source_order: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         traces: list[dict[str, Any]] = []
-        source_order = self._resolve_source_order(channel)
+        active_order = list(source_order or self._resolve_source_order(channel))
         traces.append(
             {
                 "step": "fetch_source_order",
                 "status": "info",
-                "message": f"按优先级执行资源搜索: {' > '.join(source_order)}",
-                "payload": {"source_order": source_order},
+                "message": f"按优先级执行资源搜索: {' > '.join(active_order) if active_order else '无可用来源'}",
+                "payload": {"source_order": active_order},
             }
         )
-        for source in source_order:
+        if not active_order:
+            traces.append(
+                {
+                    "step": "fetch_source_order_empty",
+                    "status": "warning",
+                    "message": "当前优先级来源均不可用，请检查配置",
+                }
+            )
+            return [], traces
+
+        for source in active_order:
             source_resources: list[dict[str, Any]] = []
             source_traces: list[dict[str, Any]] = []
             try:
@@ -516,7 +536,6 @@ class SubscriptionService:
     def _resolve_source_order(self, channel: str) -> list[str]:
         _ = channel
         priority = runtime_settings_service.get_subscription_resource_priority()
-        default_priority = ["nullbr", "hdhive", "pansou", "tg"]
         source_order = [item for item in priority if item in {"nullbr", "hdhive", "pansou", "tg"}]
         tg_ready = bool(
             runtime_settings_service.get_tg_api_id().strip()
@@ -526,8 +545,6 @@ class SubscriptionService:
         )
         if not tg_ready:
             source_order = [item for item in source_order if item != "tg"]
-        if not source_order:
-            source_order = [item for item in default_priority if item != "tg" or tg_ready]
         return source_order
 
     async def _fetch_from_nullbr(self, sub: "SubscriptionSnapshot") -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
