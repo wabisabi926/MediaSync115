@@ -42,14 +42,6 @@
             <el-icon><Document /></el-icon>
             <span>日志</span>
           </el-menu-item>
-          <el-menu-item index="/scheduler">
-            <el-icon><Clock /></el-icon>
-            <span>调度中心</span>
-          </el-menu-item>
-          <el-menu-item index="/workflow">
-            <el-icon><Connection /></el-icon>
-            <span>工作流</span>
-          </el-menu-item>
           <el-menu-item index="/settings">
             <el-icon><Setting /></el-icon>
             <span>设置</span>
@@ -135,14 +127,6 @@
           <el-menu-item index="/logs">
             <el-icon><Document /></el-icon>
             <span>日志</span>
-          </el-menu-item>
-          <el-menu-item index="/scheduler">
-            <el-icon><Clock /></el-icon>
-            <span>调度中心</span>
-          </el-menu-item>
-          <el-menu-item index="/workflow">
-            <el-icon><Connection /></el-icon>
-            <span>工作流</span>
           </el-menu-item>
           <el-menu-item index="/settings">
             <el-icon><Setting /></el-icon>
