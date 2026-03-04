@@ -407,10 +407,49 @@ class Pan115Service:
             "offset": offset,
             "limit": limit
         }
-        # Use client-bound call so request context (cookie/session headers) is applied.
-        # Class-level invocation can be blocked by upstream anti-bot and return 405.
-        result = await self._async_call("share_snap", payload)
-        data = check_response(result)
+        attempts = (
+            ("share_snap", {"base_url": "https://webapi.115.com"}, "webapi.115.com/share/snap"),
+            ("share_snap", {}, "default/share_snap"),
+            ("share_snap", {"base_url": "https://proapi.115.com"}, "proapi.115.com/share/snap"),
+        )
+
+        max_retries_per_attempt = 3
+        last_error: Exception | None = None
+        method_not_allowed_error = False
+        failed_endpoint = ""
+        data: Any | None = None
+        for method_name, extra_kwargs, endpoint in attempts:
+            failed_endpoint = endpoint
+            for retry in range(max_retries_per_attempt):
+                try:
+                    result = await self._async_call(method_name, payload, **extra_kwargs)
+                    data = check_response(result)
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    error_text = str(exc)
+                    if self._is_auth_related_error(error_text):
+                        raise
+                    if self._is_method_not_allowed_error(error_text):
+                        method_not_allowed_error = True
+                        if retry < max_retries_per_attempt - 1:
+                            await asyncio.sleep(0.6 * (retry + 1))
+                            continue
+                    break
+
+            # 请求成功后直接返回
+            if data is not None:
+                break
+
+        if data is None:
+            if method_not_allowed_error:
+                raise RuntimeError(
+                    "share_api_method_not_allowed: "
+                    f"endpoint={failed_endpoint}, share_code={share_code}, cid={cid}, "
+                    f"detail={str(last_error)[:300] if last_error else 'unknown'}"
+                )
+            raise last_error or Exception("获取分享文件列表失败")
+
         # 确保返回的是字典格式，包含 list 字段
         if isinstance(data, list):
             return {"list": data}
@@ -853,6 +892,13 @@ class Pan115Service:
             "登录超时",
         )
         return any(token in text for token in auth_tokens)
+
+    @staticmethod
+    def _is_method_not_allowed_error(error_text: str) -> bool:
+        text = str(error_text or "").lower()
+        if not text:
+            return False
+        return "code=405" in text or "method not allowed" in text
 
     @staticmethod
     def _is_retryable_save_error(error_text: str) -> bool:

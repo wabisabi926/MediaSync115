@@ -108,34 +108,56 @@ class SchedulerManager:
             func = meta.get("func")
             kwargs = dict(meta.get("kwargs") or {})
             result = await self._run_callable(func, kwargs)
-            await self._mark_job_result(job_id, True, result)
-            await operation_log_service.log_background_event(
-                source_type="scheduler",
-                module="scheduler",
-                action="scheduler.job.finish",
-                status="success",
-                message=f"调度任务执行成功: {job_id}",
-                trace_id=job_id,
-                extra={"result": result},
-            )
-            return {"success": True, "result": result}
+            run_ok = True
+            run_error = ""
         except Exception as exc:
             logger.exception("Scheduled job failed: %s", job_id)
-            await self._mark_job_result(job_id, False, str(exc))
+            result = None
+            run_ok = False
+            run_error = str(exc)
+        persist_error = ""
+        try:
+            await self._mark_job_result(job_id, run_ok, result if run_ok else run_error)
+        except Exception as exc:
+            persist_error = str(exc)
+            logger.exception("Failed to persist scheduled job result: %s", job_id)
+            await operation_log_service.log_background_event(
+                source_type="scheduler",
+                module="scheduler",
+                action="scheduler.job.result_persist_failed",
+                status="warning",
+                message=f"调度任务结果持久化失败: {job_id}",
+                trace_id=job_id,
+                extra={"error": persist_error[:500]},
+            )
+        try:
+            finish_status = "success" if run_ok and not persist_error else ("warning" if run_ok else "failed")
+            finish_message = (
+                f"调度任务执行成功: {job_id}"
+                if run_ok
+                else f"调度任务执行失败: {job_id}"
+            )
+            finish_extra: dict[str, Any] = {"result": result} if run_ok else {"error": run_error}
+            if persist_error:
+                finish_extra["persist_error"] = persist_error[:500]
             await operation_log_service.log_background_event(
                 source_type="scheduler",
                 module="scheduler",
                 action="scheduler.job.finish",
-                status="failed",
-                message=f"调度任务执行失败: {job_id}",
+                status=finish_status,
+                message=finish_message,
                 trace_id=job_id,
-                extra={"error": str(exc)},
+                extra=finish_extra,
             )
-            return {"success": False, "message": str(exc)}
+        except Exception:
+            logger.exception("Failed to write scheduler finish log: %s", job_id)
         finally:
             with self._run_lock:
                 if job_id in self._jobs:
                     self._jobs[job_id]["running"] = False
+        if run_ok:
+            return {"success": True, "result": result, "persist_error": persist_error or None}
+        return {"success": False, "message": run_error, "persist_error": persist_error or None}
 
     async def run_now(self, job_id: str) -> dict[str, Any]:
         return await self.start(job_id)
@@ -207,6 +229,9 @@ class SchedulerManager:
                 kwargs={"job_id": job_id},
                 id=job_id,
                 name=task.name,
+                coalesce=True,
+                misfire_grace_time=900,
+                max_instances=1,
                 replace_existing=True,
             )
         else:
@@ -217,6 +242,9 @@ class SchedulerManager:
                 kwargs={"job_id": job_id},
                 id=job_id,
                 name=task.name,
+                coalesce=True,
+                misfire_grace_time=900,
+                max_instances=1,
                 replace_existing=True,
             )
 
@@ -245,6 +273,9 @@ class SchedulerManager:
             kwargs={"job_id": job_id},
             id=job_id,
             name=f"workflow:{workflow.name}",
+            coalesce=True,
+            misfire_grace_time=900,
+            max_instances=1,
             replace_existing=True,
         )
 

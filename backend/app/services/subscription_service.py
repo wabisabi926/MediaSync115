@@ -382,42 +382,69 @@ class SubscriptionService:
         result["status"] = status.value
         result["message"] = message
 
-        await self._create_execution_log(
-            db=db,
-            channel=normalized_channel,
-            status=status,
-            message=message,
-            checked_count=result["checked_count"],
-            new_resource_count=result["new_resource_count"],
-            failed_count=result["failed_count"],
-            details=result["errors"],
-            started_at=started_at,
-            finished_at=finished_at,
-        )
-        await self._create_step_log(
-            db,
-            run_id=run_id,
-            channel=normalized_channel,
-            step="run_finish",
-            status=status.value,
-            message=message,
-            payload={
-                "checked_count": result["checked_count"],
-                "resource_checked_count": result["resource_checked_count"],
-                "new_resource_count": result["new_resource_count"],
-                "resource_duplicate_count": result["resource_duplicate_count"],
-                "auto_saved_count": result["auto_saved_count"],
-                "auto_failed_count": result["auto_failed_count"],
-                "failed_count": result["failed_count"],
-                "hdhive_unlock_attempted_count": result["hdhive_unlock_attempted_count"],
-                "hdhive_unlock_success_count": result["hdhive_unlock_success_count"],
-                "hdhive_unlock_failed_count": result["hdhive_unlock_failed_count"],
-                "hdhive_unlock_skipped_count": result["hdhive_unlock_skipped_count"],
-                "hdhive_unlock_points_spent": result["hdhive_unlock_points_spent"],
-            },
-        )
-        await self._prune_step_logs(db)
-        await db.commit()
+        finalize_error = ""
+        try:
+            await self._create_execution_log(
+                db=db,
+                channel=normalized_channel,
+                status=status,
+                message=message,
+                checked_count=result["checked_count"],
+                new_resource_count=result["new_resource_count"],
+                failed_count=result["failed_count"],
+                details=result["errors"],
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            await self._create_step_log(
+                db,
+                run_id=run_id,
+                channel=normalized_channel,
+                step="run_finish",
+                status=status.value,
+                message=message,
+                payload={
+                    "checked_count": result["checked_count"],
+                    "resource_checked_count": result["resource_checked_count"],
+                    "new_resource_count": result["new_resource_count"],
+                    "resource_duplicate_count": result["resource_duplicate_count"],
+                    "auto_saved_count": result["auto_saved_count"],
+                    "auto_failed_count": result["auto_failed_count"],
+                    "failed_count": result["failed_count"],
+                    "hdhive_unlock_attempted_count": result["hdhive_unlock_attempted_count"],
+                    "hdhive_unlock_success_count": result["hdhive_unlock_success_count"],
+                    "hdhive_unlock_failed_count": result["hdhive_unlock_failed_count"],
+                    "hdhive_unlock_skipped_count": result["hdhive_unlock_skipped_count"],
+                    "hdhive_unlock_points_spent": result["hdhive_unlock_points_spent"],
+                },
+            )
+            await self._prune_step_logs(db)
+            await db.commit()
+        except Exception as exc:
+            finalize_error = str(exc)
+            await db.rollback()
+            result["errors"].append({"stage": "run_finalize", "error": finalize_error})
+            result["finalize_error"] = finalize_error
+            result["message"] = f"{message}；收尾阶段异常: {finalize_error[:200]}"
+            if result["status"] == ExecutionStatus.SUCCESS.value:
+                result["status"] = ExecutionStatus.PARTIAL.value
+
+            try:
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=normalized_channel,
+                    step="run_finalize_failed",
+                    status="failed",
+                    message=f"执行收尾失败: {finalize_error[:300]}",
+                    payload={
+                        "error": finalize_error[:500],
+                        "status_before_finalize": status.value,
+                    },
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
         return result
 
     async def _create_step_log(
@@ -445,16 +472,17 @@ class SubscriptionService:
         db.add(row)
 
     async def _prune_step_logs(self, db: AsyncSession) -> None:
-        keep_ids_result = await db.execute(
+        keep_ids_subquery = (
             select(SubscriptionStepLog.id)
             .order_by(SubscriptionStepLog.created_at.desc(), SubscriptionStepLog.id.desc())
             .limit(1000)
+            .subquery()
         )
-        keep_ids = [row[0] for row in keep_ids_result.all() if row and row[0]]
-        if keep_ids:
-            await db.execute(
-                delete(SubscriptionStepLog).where(SubscriptionStepLog.id.notin_(keep_ids))
+        await db.execute(
+            delete(SubscriptionStepLog).where(
+                ~SubscriptionStepLog.id.in_(select(keep_ids_subquery.c.id))
             )
+        )
 
     async def _fetch_resources(
         self,
