@@ -1671,8 +1671,11 @@ class SubscriptionService:
         if not text:
             return False
         tokens = (
+            "share_api_method_not_allowed",
             "code=405",
+            "code=404",
             "method not allowed",
+            "nothing matches the given uri",
             "rate",
             "timeout",
             "频繁",

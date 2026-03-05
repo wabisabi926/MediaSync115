@@ -440,7 +440,8 @@ class Pan115Service:
         attempts = (
             ("share_snap", {"base_url": "https://webapi.115.com"}, "webapi.115.com/share/snap"),
             ("share_snap", {}, "default/share_snap"),
-            ("share_snap", {"base_url": "https://proapi.115.com"}, "proapi.115.com/share/snap"),
+            # proapi 的正确端点是 /{app}/2.0/share/snap，需调用 share_snap_app
+            ("share_snap_app", {"app": "android", "base_url": "https://proapi.115.com"}, "proapi.115.com/android/2.0/share/snap"),
         )
 
         max_retries_per_attempt = 3
