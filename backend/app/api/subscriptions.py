@@ -282,11 +282,24 @@ async def list_tv_missing_status(
     refresh: bool = Query(False, description="是否忽略缓存强制刷新"),
     db: AsyncSession = Depends(get_db),
 ):
+    has_successful_transfer = (
+        select(DownloadRecord.id)
+        .where(
+            DownloadRecord.subscription_id == Subscription.id,
+            or_(
+                DownloadRecord.completed_at.is_not(None),
+                DownloadRecord.file_id.is_not(None),
+                DownloadRecord.status == MediaStatus.COMPLETED,
+            ),
+        )
+        .exists()
+    )
     result = await db.execute(
         select(Subscription)
         .where(
             Subscription.media_type == MediaType.TV,
             Subscription.is_active == True,  # noqa: E712
+            ~has_successful_transfer,
         )
         .order_by(Subscription.created_at.desc())
         .limit(limit)
