@@ -11,3 +11,8 @@ nullbr>=1.0.8
 python-multipart>=0.0.9
 p115client>=0.0.8.4.6
 telethon>=1.36.0
+
+# Testing dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0

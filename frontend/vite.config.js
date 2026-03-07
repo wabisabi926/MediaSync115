@@ -13,6 +13,25 @@ export default defineConfig(({ mode }) => {
         '@': resolve(__dirname, 'src')
       }
     },
+    css: {
+      preprocessorOptions: {
+        scss: {
+          api: 'modern-compiler'
+        }
+      }
+    },
+    build: {
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'element-plus': ['element-plus'],
+            'vue-vendor': ['vue', 'vue-router', 'pinia'],
+            'utils': ['axios']
+          }
+        }
+      }
+    },
     server: {
       host: '127.0.0.1',
       port: 5173,
