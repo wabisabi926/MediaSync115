@@ -1193,6 +1193,10 @@ class Pan115Service:
             '"errno": 990001',
             "errno=990001",
             "errno: 990001",
+            "errno': 99",
+            '"errno": 99',
+            "errno=99",
+            "errno: 99",
             "重新登录",
             "登录超时",
         )

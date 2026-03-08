@@ -48,6 +48,9 @@ def classify_115_error(error_msg: str) -> str:
         or "errno': 990001" in lowered
         or '"errno": 990001' in lowered
         or "errno=990001" in lowered
+        or "errno': 99" in lowered
+        or '"errno": 99' in lowered
+        or "errno=99" in lowered
         or "重新登录" in text
         or "登录超时" in text
     ):
@@ -155,7 +158,7 @@ def handle_115_error(e: Exception) -> None:
     """统一处理115 API错误"""
     error_msg = str(e)
     lowered_error_msg = error_msg.lower()
-    
+
     # Cookie相关错误
     if (
         "cookie" in lowered_error_msg
@@ -168,6 +171,10 @@ def handle_115_error(e: Exception) -> None:
         or "errno 990001" in lowered_error_msg
         or "errno':990001" in lowered_error_msg
         or "errno\":990001" in lowered_error_msg
+        or "errno': 99" in lowered_error_msg
+        or '"errno": 99' in lowered_error_msg
+        or "errno=99" in lowered_error_msg
+        or "errno: 99" in lowered_error_msg
         or "重新登录" in error_msg
         or "登录超时" in error_msg
     ):
