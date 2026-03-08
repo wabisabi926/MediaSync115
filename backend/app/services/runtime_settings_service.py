@@ -422,6 +422,10 @@ class RuntimeSettingsService:
         settings.EMBY_URL = self.get_emby_url()
         settings.EMBY_API_KEY = self.get_emby_api_key()
 
+        # Keep the singleton client in sync with runtime cookie updates.
+        from app.services.pan115_service import pan115_service
+
+        pan115_service.update_cookie(self.get_pan115_cookie())
         hdhive_service.set_cookie(self.get_hdhive_cookie())
         hdhive_service.set_base_url(self.get_hdhive_base_url())
         pansou_service.set_base_url(self.get_pansou_base_url())
