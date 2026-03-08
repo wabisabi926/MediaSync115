@@ -125,6 +125,34 @@ class EmbyService:
                     "existing_episodes": set(),
                 }
 
+    async def get_movie_status_by_tmdb(self, tmdb_id: int) -> dict[str, Any]:
+        """基于 Emby API 直接判断电影是否已入库。"""
+        if not self.base_url or not self.api_key:
+            return {
+                "status": "not_configured",
+                "message": "Emby 未配置",
+                "exists": False,
+                "item_ids": [],
+            }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                movie_ids = await self._find_movie_ids_by_tmdb(client, tmdb_id)
+                return {
+                    "status": "ok",
+                    "message": "查询成功" if movie_ids else "Emby 中未匹配到该 TMDB 电影",
+                    "exists": bool(movie_ids),
+                    "item_ids": movie_ids,
+                }
+            except Exception as e:
+                print(f"Error fetching movie status from Emby: {e}")
+                return {
+                    "status": "request_failed",
+                    "message": str(e),
+                    "exists": False,
+                    "item_ids": [],
+                }
+
     async def _find_series_ids_by_tmdb(self, client: httpx.AsyncClient, tmdb_id: int) -> list[str]:
         target = str(int(tmdb_id))
         series_items = await self._fetch_items(
@@ -170,6 +198,51 @@ class EmbyService:
             seen.add(series_id)
             series_ids.append(series_id)
         return series_ids
+
+    async def _find_movie_ids_by_tmdb(self, client: httpx.AsyncClient, tmdb_id: int) -> list[str]:
+        target = str(int(tmdb_id))
+        movie_items = await self._fetch_items(
+            client,
+            {
+                "IncludeItemTypes": "Movie",
+                "Recursive": "true",
+                "Fields": "ProviderIds",
+                "AnyProviderIdEquals": f"Tmdb.{target}",
+            },
+        )
+        if not movie_items:
+            movie_items = await self._fetch_items(
+                client,
+                {
+                    "IncludeItemTypes": "Movie",
+                    "Recursive": "true",
+                    "Fields": "ProviderIds",
+                    "ProviderIds.Tmdb": target,
+                },
+            )
+
+        movie_ids: list[str] = []
+        seen: set[str] = set()
+        for item in movie_items:
+            if not isinstance(item, dict):
+                continue
+            provider_ids = item.get("ProviderIds")
+            if not isinstance(provider_ids, dict):
+                provider_ids = {}
+            provider_tmdb = str(
+                provider_ids.get("Tmdb")
+                or provider_ids.get("TMDB")
+                or provider_ids.get("tmdb")
+                or ""
+            ).strip()
+            if provider_tmdb != target:
+                continue
+            movie_id = str(item.get("Id") or "").strip()
+            if not movie_id or movie_id in seen:
+                continue
+            seen.add(movie_id)
+            movie_ids.append(movie_id)
+        return movie_ids
 
     async def _fetch_items(self, client: httpx.AsyncClient, params: dict[str, Any]) -> list[dict[str, Any]]:
         return await self._fetch_items_by_endpoint(client, "/emby/Items", params)

@@ -19,6 +19,7 @@ from app.models.models import (
     SubscriptionStepLog,
 )
 from app.api.search import _normalize_pansou_pan115_list, _search_pansou_pan115_resources
+from app.services.emby_service import emby_service
 from app.services.hdhive_service import hdhive_service
 from app.services.nullbr_service import nullbr_service
 from app.services.pan115_service import Pan115Service
@@ -61,6 +62,9 @@ class SubscriptionService:
             "hdhive_unlock_failed_count": 0,
             "hdhive_unlock_skipped_count": 0,
             "hdhive_unlock_points_spent": 0,
+            "cleanup_deleted_count": 0,
+            "cleanup_movie_deleted_count": 0,
+            "cleanup_tv_deleted_count": 0,
             "errors": [],
             "started_at": started_at.isoformat(),
         }
@@ -78,6 +82,7 @@ class SubscriptionService:
                 ),
             )
             .exists()
+            .label("has_successful_transfer")
         )
         subs_result = await db.execute(
             select(
@@ -87,10 +92,10 @@ class SubscriptionService:
                 Subscription.media_type,
                 Subscription.year,
                 Subscription.auto_download,
+                has_successful_transfer,
             )
             .where(
                 Subscription.is_active == True,  # noqa: E712
-                ~has_successful_transfer,
             )
             .order_by(Subscription.id.asc())
         )
@@ -102,6 +107,7 @@ class SubscriptionService:
                 media_type=row.media_type,
                 year=str(row.year) if row.year is not None else None,
                 auto_download=bool(row.auto_download),
+                has_successful_transfer=bool(row.has_successful_transfer),
             )
             for row in subs_result.all()
         ]
@@ -118,7 +124,8 @@ class SubscriptionService:
                 "source_order": source_order,
                 "scope": {
                     "is_active": True,
-                    "exclude_transferred_success": True,
+                    "exclude_transferred_success": False,
+                    "cleanup_enabled": True,
                 },
             },
         )
@@ -155,6 +162,28 @@ class SubscriptionService:
                     status="info",
                     message="开始处理订阅",
                 )
+                cleanup_before = await self._evaluate_pre_scan_cleanup(
+                    db,
+                    run_id=run_id,
+                    channel=normalized_channel,
+                    sub=sub,
+                )
+                if cleanup_before.get("deleted"):
+                    self._apply_cleanup_stats(result, sub.media_type)
+                    await self._create_step_log(
+                        db,
+                        run_id=run_id,
+                        channel=normalized_channel,
+                        subscription_id=sub_id,
+                        subscription_title=sub_title,
+                        step="subscription_done",
+                        status="success",
+                        message="订阅已自动清理",
+                    )
+                    await db.commit()
+                    continue
+
+                tv_missing_snapshot = cleanup_before.get("tv_missing_snapshot")
                 resources, fetch_trace = await self._fetch_resources(
                     normalized_channel,
                     sub,
@@ -214,6 +243,7 @@ class SubscriptionService:
                 if should_auto_download:
                     sub_saved_count = 0
                     sub_failed_transfer_count = 0
+                    cleanup_after_auto: dict[str, Any] | None = None
                     retry_records = []
                     if sub.auto_download:
                         retry_records = await self._load_retryable_records(db, sub_id)
@@ -244,6 +274,7 @@ class SubscriptionService:
                             sub,
                             created_records,
                             source="new",
+                            tv_missing_snapshot=tv_missing_snapshot,
                         )
                         sub_saved_count += int(new_auto_stats.get("saved") or 0)
                         sub_failed_transfer_count += int(new_auto_stats.get("failed") or 0)
@@ -266,8 +297,10 @@ class SubscriptionService:
                                 f"失败 {new_auto_stats['failed']} 条"
                             ),
                         )
+                        if new_auto_stats.get("subscription_completed"):
+                            cleanup_after_auto = new_auto_stats
 
-                    if retry_records:
+                    if retry_records and cleanup_after_auto is None:
                         await self._create_step_log(
                             db,
                             run_id=run_id,
@@ -285,6 +318,7 @@ class SubscriptionService:
                             sub,
                             retry_records,
                             source="retry",
+                            tv_missing_snapshot=tv_missing_snapshot,
                         )
                         sub_saved_count += int(retry_auto_stats.get("saved") or 0)
                         sub_failed_transfer_count += int(retry_auto_stats.get("failed") or 0)
@@ -307,6 +341,8 @@ class SubscriptionService:
                                 f"失败 {retry_auto_stats['failed']} 条"
                             ),
                         )
+                        if retry_auto_stats.get("subscription_completed"):
+                            cleanup_after_auto = retry_auto_stats
 
                     await self._create_step_log(
                         db,
@@ -321,6 +357,22 @@ class SubscriptionService:
                             f"新资源 {len(created_records)} 条，历史重试 {len(retry_records)} 条"
                         ),
                     )
+                    if cleanup_after_auto is not None:
+                        await self._delete_subscription_with_records(db, sub_id)
+                        await self._create_step_log(
+                            db,
+                            run_id=run_id,
+                            channel=normalized_channel,
+                            subscription_id=sub_id,
+                            subscription_title=sub_title,
+                            step=str(cleanup_after_auto.get("cleanup_step") or "subscription_cleanup_after_transfer"),
+                            status="success",
+                            message=str(cleanup_after_auto.get("cleanup_message") or "订阅已自动清理"),
+                            payload=cleanup_after_auto.get("cleanup_payload")
+                            if isinstance(cleanup_after_auto.get("cleanup_payload"), dict)
+                            else None,
+                        )
+                        self._apply_cleanup_stats(result, sub.media_type)
                 else:
                     await self._create_step_log(
                         db,
@@ -432,6 +484,9 @@ class SubscriptionService:
                     "auto_saved_count": result["auto_saved_count"],
                     "auto_failed_count": result["auto_failed_count"],
                     "failed_count": result["failed_count"],
+                    "cleanup_deleted_count": result["cleanup_deleted_count"],
+                    "cleanup_movie_deleted_count": result["cleanup_movie_deleted_count"],
+                    "cleanup_tv_deleted_count": result["cleanup_tv_deleted_count"],
                     "hdhive_unlock_attempted_count": result["hdhive_unlock_attempted_count"],
                     "hdhive_unlock_success_count": result["hdhive_unlock_success_count"],
                     "hdhive_unlock_failed_count": result["hdhive_unlock_failed_count"],
@@ -504,6 +559,154 @@ class SubscriptionService:
                 ~SubscriptionStepLog.id.in_(select(keep_ids_subquery.c.id))
             )
         )
+
+    async def _evaluate_pre_scan_cleanup(
+        self,
+        db: AsyncSession,
+        *,
+        run_id: str,
+        channel: str,
+        sub: "SubscriptionSnapshot",
+    ) -> dict[str, Any]:
+        if sub.media_type == MediaType.MOVIE:
+            if sub.has_successful_transfer:
+                await self._delete_subscription_with_records(db, sub.id)
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=channel,
+                    subscription_id=sub.id,
+                    subscription_title=sub.title,
+                    step="subscription_cleanup_movie_transferred",
+                    status="success",
+                    message="电影订阅已有成功转存记录，已自动删除",
+                    payload={"reason": "successful_transfer"},
+                )
+                return {"deleted": True}
+
+            if sub.tmdb_id is None:
+                return {"deleted": False, "tv_missing_snapshot": None}
+
+            movie_status = await emby_service.get_movie_status_by_tmdb(sub.tmdb_id)
+            status_text = str(movie_status.get("status") or "")
+            if status_text == "ok":
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=channel,
+                    subscription_id=sub.id,
+                    subscription_title=sub.title,
+                    step="movie_emby_check_done",
+                    status="info",
+                    message="电影 Emby 状态查询完成",
+                    payload={
+                        "tmdb_id": sub.tmdb_id,
+                        "exists": bool(movie_status.get("exists")),
+                        "matched_count": len(movie_status.get("item_ids") or []),
+                    },
+                )
+                if bool(movie_status.get("exists")):
+                    await self._delete_subscription_with_records(db, sub.id)
+                    await self._create_step_log(
+                        db,
+                        run_id=run_id,
+                        channel=channel,
+                        subscription_id=sub.id,
+                        subscription_title=sub.title,
+                        step="subscription_cleanup_movie_emby_exists",
+                        status="success",
+                        message="电影已存在于 Emby，已自动删除订阅",
+                        payload={"tmdb_id": sub.tmdb_id, "matched_item_ids": movie_status.get("item_ids") or []},
+                    )
+                    return {"deleted": True}
+            elif status_text:
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=channel,
+                    subscription_id=sub.id,
+                    subscription_title=sub.title,
+                    step="movie_emby_check_failed",
+                    status="warning",
+                    message=f"电影 Emby 状态查询失败，跳过自动清理: {movie_status.get('message') or 'unknown'}",
+                    payload={"tmdb_id": sub.tmdb_id, "status": status_text},
+                )
+            return {"deleted": False, "tv_missing_snapshot": None}
+
+        if sub.media_type != MediaType.TV or sub.tmdb_id is None:
+            return {"deleted": False, "tv_missing_snapshot": None}
+
+        await self._create_step_log(
+            db,
+            run_id=run_id,
+            channel=channel,
+            subscription_id=sub.id,
+            subscription_title=sub.title,
+            step="tv_missing_fetch_start",
+            status="info",
+            message="开始查询 Emby 缺集状态",
+            payload={"tmdb_id": sub.tmdb_id},
+        )
+        tv_missing_result = await tv_missing_service.get_tv_missing_status(sub.tmdb_id, include_specials=False)
+        status_text = str(tv_missing_result.get("status") or "")
+        if status_text == "ok":
+            counts = tv_missing_result.get("counts") if isinstance(tv_missing_result.get("counts"), dict) else {}
+            missing_count = int(counts.get("missing") or 0)
+            await self._create_step_log(
+                db,
+                run_id=run_id,
+                channel=channel,
+                subscription_id=sub.id,
+                subscription_title=sub.title,
+                step="tv_missing_fetch_done",
+                status="success",
+                message="缺集状态查询完成",
+                payload={
+                    "aired_count": int(counts.get("aired") or 0),
+                    "existing_count": int(counts.get("existing") or 0),
+                    "missing_count": missing_count,
+                },
+            )
+            if missing_count <= 0:
+                await self._delete_subscription_with_records(db, sub.id)
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=channel,
+                    subscription_id=sub.id,
+                    subscription_title=sub.title,
+                    step="subscription_cleanup_tv_no_missing",
+                    status="success",
+                    message="剧集已不缺集，已自动删除订阅",
+                    payload={"tmdb_id": sub.tmdb_id, "missing_count": 0},
+                )
+                return {"deleted": True, "tv_missing_snapshot": tv_missing_result}
+            return {"deleted": False, "tv_missing_snapshot": tv_missing_result}
+
+        await self._create_step_log(
+            db,
+            run_id=run_id,
+            channel=channel,
+            subscription_id=sub.id,
+            subscription_title=sub.title,
+            step="tv_missing_fetch_failed",
+            status="warning",
+            message=f"缺集状态查询失败，跳过自动清理: {tv_missing_result.get('message') or 'unknown'}",
+            payload={"tmdb_id": sub.tmdb_id, "status": status_text or "unknown"},
+        )
+        return {"deleted": False, "tv_missing_snapshot": None}
+
+    async def _delete_subscription_with_records(self, db: AsyncSession, subscription_id: int) -> None:
+        await db.execute(delete(DownloadRecord).where(DownloadRecord.subscription_id == subscription_id))
+        await db.execute(delete(Subscription).where(Subscription.id == subscription_id))
+
+    @staticmethod
+    def _apply_cleanup_stats(result: dict[str, Any], media_type: MediaType) -> None:
+        result["cleanup_deleted_count"] = int(result.get("cleanup_deleted_count") or 0) + 1
+        if media_type == MediaType.TV:
+            result["cleanup_tv_deleted_count"] = int(result.get("cleanup_tv_deleted_count") or 0) + 1
+        else:
+            result["cleanup_movie_deleted_count"] = int(result.get("cleanup_movie_deleted_count") or 0) + 1
 
     async def _fetch_resources(
         self,
@@ -1236,6 +1439,7 @@ class SubscriptionService:
         sub: "SubscriptionSnapshot",
         records: list[DownloadRecord],
         source: str,
+        tv_missing_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from app.models.models import MediaStatus
         runtime_cookie = runtime_settings_service.get_pan115_cookie()
@@ -1252,20 +1456,26 @@ class SubscriptionService:
         tv_missing_enabled = False
         missing_episodes: set[tuple[int, int]] = set()
         is_tv_subscription = sub.media_type == MediaType.TV and sub.tmdb_id is not None
+        subscription_completed = False
+        cleanup_step = ""
+        cleanup_message = ""
+        cleanup_payload: dict[str, Any] = {}
 
         if is_tv_subscription:
-            await self._create_step_log(
-                db,
-                run_id=run_id,
-                channel=channel,
-                subscription_id=sub.id,
-                subscription_title=sub.title,
-                step="tv_missing_fetch_start",
-                status="info",
-                message="开始查询 Emby 缺集状态",
-                payload={"tmdb_id": sub.tmdb_id},
-            )
-            tv_missing_result = await tv_missing_service.get_tv_missing_status(sub.tmdb_id, include_specials=False)
+            tv_missing_result = tv_missing_snapshot
+            if tv_missing_result is None:
+                await self._create_step_log(
+                    db,
+                    run_id=run_id,
+                    channel=channel,
+                    subscription_id=sub.id,
+                    subscription_title=sub.title,
+                    step="tv_missing_fetch_start",
+                    status="info",
+                    message="开始查询 Emby 缺集状态",
+                    payload={"tmdb_id": sub.tmdb_id},
+                )
+                tv_missing_result = await tv_missing_service.get_tv_missing_status(sub.tmdb_id, include_specials=False)
             if str(tv_missing_result.get("status") or "") == "ok":
                 tv_missing_enabled = True
                 missing_episodes = {
@@ -1273,22 +1483,23 @@ class SubscriptionService:
                     for pair in (tv_missing_result.get("missing_episodes") or [])
                     if isinstance(pair, (list, tuple)) and len(pair) == 2
                 }
-                await self._create_step_log(
-                    db,
-                    run_id=run_id,
-                    channel=channel,
-                    subscription_id=sub.id,
-                    subscription_title=sub.title,
-                    step="tv_missing_fetch_done",
-                    status="success",
-                    message="缺集状态查询完成",
-                    payload={
-                        "aired_count": int((tv_missing_result.get("counts") or {}).get("aired") or 0),
-                        "existing_count": int((tv_missing_result.get("counts") or {}).get("existing") or 0),
-                        "missing_count": len(missing_episodes),
-                    },
-                )
-            else:
+                if tv_missing_snapshot is None:
+                    await self._create_step_log(
+                        db,
+                        run_id=run_id,
+                        channel=channel,
+                        subscription_id=sub.id,
+                        subscription_title=sub.title,
+                        step="tv_missing_fetch_done",
+                        status="success",
+                        message="缺集状态查询完成",
+                        payload={
+                            "aired_count": int((tv_missing_result.get("counts") or {}).get("aired") or 0),
+                            "existing_count": int((tv_missing_result.get("counts") or {}).get("existing") or 0),
+                            "missing_count": len(missing_episodes),
+                        },
+                    )
+            elif tv_missing_snapshot is None:
                 await self._create_step_log(
                     db,
                     run_id=run_id,
@@ -1434,6 +1645,17 @@ class SubscriptionService:
                             "folder_id": record.file_id,
                         },
                     )
+                    if not missing_episodes:
+                        subscription_completed = True
+                        cleanup_step = "subscription_cleanup_tv_completed_after_transfer"
+                        cleanup_message = "剧集缺集已补齐，已自动删除订阅"
+                        cleanup_payload = {
+                            "source": source,
+                            "record_id": record.id,
+                            "remaining_missing_count": 0,
+                            "folder_id": record.file_id,
+                        }
+                        break
                 else:
                     result = await pan_service.save_share_to_folder(
                         share_url=share_link,
@@ -1463,6 +1685,15 @@ class SubscriptionService:
                             "folder_id": record.file_id,
                         },
                     )
+                    subscription_completed = True
+                    cleanup_step = "subscription_cleanup_movie_transferred"
+                    cleanup_message = "电影转存成功，已自动删除订阅"
+                    cleanup_payload = {
+                        "source": source,
+                        "record_id": record.id,
+                        "folder_id": record.file_id,
+                    }
+                    break
             except Exception as exc:
                 if self._is_already_received_error(str(exc)):
                     # 115 返回已接收时视为成功，避免重复任务被统计为失败。
@@ -1489,6 +1720,16 @@ class SubscriptionService:
                             "reason": "already_received",
                         },
                     )
+                    if not is_tv_subscription:
+                        subscription_completed = True
+                        cleanup_step = "subscription_cleanup_movie_transferred"
+                        cleanup_message = "电影资源已在网盘中，已自动删除订阅"
+                        cleanup_payload = {
+                            "source": source,
+                            "record_id": record.id,
+                            "reason": "already_received",
+                        }
+                        break
                     continue
                 record.status = MediaStatus.FAILED
                 record.error_message = str(exc)[:1000]
@@ -1518,7 +1759,16 @@ class SubscriptionService:
                     }
                 )
 
-        return {"saved": saved, "failed": failed, "errors": errors}
+        return {
+            "saved": saved,
+            "failed": failed,
+            "errors": errors,
+            "subscription_completed": subscription_completed,
+            "cleanup_step": cleanup_step,
+            "cleanup_message": cleanup_message,
+            "cleanup_payload": cleanup_payload,
+            "remaining_missing_count": len(missing_episodes) if tv_missing_enabled else None,
+        }
 
     async def _create_execution_log(
         self,
@@ -1744,6 +1994,7 @@ class SubscriptionService:
             f"{result['channel']} 检查完成: 订阅 {result['checked_count']} 项, "
             f"扫描资源 {result['resource_checked_count']} 条(重复 {result['resource_duplicate_count']}), "
             f"{new_resource_desc}, "
+            f"自动清理订阅 {result['cleanup_deleted_count']} 项(电影 {result['cleanup_movie_deleted_count']} / 剧集 {result['cleanup_tv_deleted_count']}), "
             f"HDHive 解锁 尝试 {result['hdhive_unlock_attempted_count']} 条(成功 {result['hdhive_unlock_success_count']} / 失败 {result['hdhive_unlock_failed_count']} / 跳过 {result['hdhive_unlock_skipped_count']} / 消耗 {result['hdhive_unlock_points_spent']} 积分), "
             f"自动转存成功 {result['auto_saved_count']} 条(新资源 {result['auto_new_saved_count']} / 历史重试 {result['auto_retry_saved_count']}), "
             f"自动转存失败 {result['auto_failed_count']} 条(新资源 {result['auto_new_failed_count']} / 历史重试 {result['auto_retry_failed_count']}), "
@@ -1762,3 +2013,4 @@ class SubscriptionSnapshot:
     media_type: MediaType
     year: str | None
     auto_download: bool
+    has_successful_transfer: bool
