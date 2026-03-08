@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ _PAN115_SHARE_URL_PATTERN = re.compile(
     r"(https?://(?:115(?:cdn)?\.com/s/[A-Za-z0-9]+(?:[^\s\"'<>]*)?|share\.115\.com/[A-Za-z0-9]+(?:[^\s\"'<>]*)?))",
     re.IGNORECASE,
 )
+logger = logging.getLogger(__name__)
 
 
 class ExploreActionQueueService:
@@ -31,7 +33,8 @@ class ExploreActionQueueService:
         self._subscribe_active_by_key: dict[str, str] = {}
         self._save_active_by_key: dict[str, str] = {}
         self._lock = asyncio.Lock()
-        self._workers_started = False
+        self._subscribe_worker_task: asyncio.Task | None = None
+        self._save_worker_task: asyncio.Task | None = None
         self._task_ttl_seconds = 60 * 60 * 3
 
     @staticmethod
@@ -163,11 +166,10 @@ class ExploreActionQueueService:
 
     async def _ensure_workers(self) -> None:
         async with self._lock:
-            if self._workers_started:
-                return
-            asyncio.create_task(self._subscribe_worker())
-            asyncio.create_task(self._save_worker())
-            self._workers_started = True
+            if self._subscribe_worker_task is None or self._subscribe_worker_task.done():
+                self._subscribe_worker_task = asyncio.create_task(self._subscribe_worker())
+            if self._save_worker_task is None or self._save_worker_task.done():
+                self._save_worker_task = asyncio.create_task(self._save_worker())
 
     async def _prune_locked(self) -> None:
         now = time.time()
@@ -193,6 +195,7 @@ class ExploreActionQueueService:
         }
 
     async def enqueue_subscribe(self, payload: dict[str, Any], intent: str) -> dict[str, Any]:
+        await self._ensure_workers()
         normalized_intent = "unsubscribe" if str(intent or "").strip().lower() == "unsubscribe" else "subscribe"
         item_key = self._build_item_key_from_payload(payload)
         now = self._now_iso()
@@ -231,10 +234,10 @@ class ExploreActionQueueService:
             self._subscribe_queue.append(task_id)
             self._subscribe_active_by_key[item_key] = task_id
 
-        await self._ensure_workers()
         return self._serialize_task(task)
 
     async def enqueue_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure_workers()
         item_key = self._build_item_key_from_payload(payload)
         now = self._now_iso()
 
@@ -270,7 +273,6 @@ class ExploreActionQueueService:
             self._save_queue.append(task_id)
             self._save_active_by_key[item_key] = task_id
 
-        await self._ensure_workers()
         return self._serialize_task(task)
 
     async def get(self, task_id: str) -> dict[str, Any] | None:
@@ -345,57 +347,65 @@ class ExploreActionQueueService:
 
     async def _subscribe_worker(self) -> None:
         while True:
-            task_id = await self._pop_subscribe_task()
-            if not task_id:
-                await asyncio.sleep(0.25)
-                continue
-
-            task = await self._mark_running(task_id)
-            if not task:
-                continue
-
             try:
-                result = await self._execute_subscribe(task)
-                await self._mark_finished(
-                    task_id,
-                    success=True,
-                    message=str(result.get("message") or "订阅队列任务执行完成"),
-                    result=result,
-                )
+                task_id = await self._pop_subscribe_task()
+                if not task_id:
+                    await asyncio.sleep(0.25)
+                    continue
+
+                task = await self._mark_running(task_id)
+                if not task:
+                    continue
+
+                try:
+                    result = await self._execute_subscribe(task)
+                    await self._mark_finished(
+                        task_id,
+                        success=True,
+                        message=str(result.get("message") or "订阅队列任务执行完成"),
+                        result=result,
+                    )
+                except Exception as exc:
+                    await self._mark_finished(
+                        task_id,
+                        success=False,
+                        message="订阅队列任务执行失败",
+                        error=str(exc),
+                    )
             except Exception as exc:
-                await self._mark_finished(
-                    task_id,
-                    success=False,
-                    message="订阅队列任务执行失败",
-                    error=str(exc),
-                )
+                logger.exception("subscribe worker loop error: %s", exc)
+                await asyncio.sleep(0.5)
 
     async def _save_worker(self) -> None:
         while True:
-            task_id = await self._pop_save_task()
-            if not task_id:
-                await asyncio.sleep(0.25)
-                continue
-
-            task = await self._mark_running(task_id)
-            if not task:
-                continue
-
             try:
-                result = await self._execute_save(task)
-                await self._mark_finished(
-                    task_id,
-                    success=True,
-                    message=str(result.get("message") or "转存队列任务执行完成"),
-                    result=result,
-                )
+                task_id = await self._pop_save_task()
+                if not task_id:
+                    await asyncio.sleep(0.25)
+                    continue
+
+                task = await self._mark_running(task_id)
+                if not task:
+                    continue
+
+                try:
+                    result = await self._execute_save(task)
+                    await self._mark_finished(
+                        task_id,
+                        success=True,
+                        message=str(result.get("message") or "转存队列任务执行完成"),
+                        result=result,
+                    )
+                except Exception as exc:
+                    await self._mark_finished(
+                        task_id,
+                        success=False,
+                        message="转存队列任务执行失败",
+                        error=str(exc),
+                    )
             except Exception as exc:
-                await self._mark_finished(
-                    task_id,
-                    success=False,
-                    message="转存队列任务执行失败",
-                    error=str(exc),
-                )
+                logger.exception("save worker loop error: %s", exc)
+                await asyncio.sleep(0.5)
 
     async def _resolve_route(self, payload: dict[str, Any]) -> dict[str, Any]:
         source = str(payload.get("source") or "douban").strip().lower()
