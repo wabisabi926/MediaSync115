@@ -164,6 +164,13 @@ export const subscriptionApi = {
       ...(params || {})
     }
   }),
+  // 用于检查订阅状态，不排除已成功转存的订阅
+  listForCheck: (params) => api.get('/subscriptions', {
+    params: {
+      is_active: true,
+      ...(params || {})
+    }
+  }),
   get: (id) => api.get(`/subscriptions/${id}`),
   create: (data) => api.post('/subscriptions', data),
   update: (id, data) => api.put(`/subscriptions/${id}`, data),
