@@ -12,7 +12,6 @@ from urllib.parse import quote
 
 import httpx
 
-from app.services.nullbr_service import nullbr_service
 from app.services.tmdb_service import tmdb_service
 from app.utils.proxy import proxy_manager
 
@@ -895,39 +894,6 @@ async def _resolve_tmdb_id_by_wikidata(
 
     return None, {"wikidata_qid": bridge.get("qid")}
 
-
-def _resolve_tmdb_id_by_nullbr(title: str, media_type: str, year: Optional[str]) -> Optional[int]:
-    title_variants = _build_title_variants(title)
-    if not title_variants:
-        return None
-
-    rows: list[dict[str, Any]] = []
-    for query in title_variants:
-        try:
-            result = nullbr_service.search(query, 1)
-        except Exception:
-            continue
-        items = result.get("items") or result.get("results") or []
-        if not isinstance(items, list):
-            continue
-        rows.extend([row for row in items if isinstance(row, dict)])
-
-    if not rows:
-        return None
-
-    expected_type = "movie" if media_type == "movie" else "tv"
-    best, _ = _pick_best_tmdb_match(
-        title=title,
-        media_type=expected_type,
-        year=year,
-        items=rows,
-    )
-    if not best:
-        return None
-    tmdb_id = best.get("tmdb_id")
-    return int(tmdb_id) if tmdb_id else None
-
-
 async def _resolve_tmdb_id_by_tmdb(title: str, media_type: str, year: Optional[str]) -> Optional[int]:
     tmdb_id, _ = await _resolve_tmdb_id_by_tmdb_with_status(title, media_type, year)
     return tmdb_id
@@ -1181,55 +1147,6 @@ async def resolve_douban_explore_item(
         }
 
     candidates: list[dict[str, Any]] = []
-    nullbr_failed = False
-    nullbr_rows: list[dict[str, Any]] = []
-    nullbr_success_count = 0
-    for query in all_title_variants:
-        try:
-            nullbr_result = nullbr_service.search(query, 1)
-            nullbr_success_count += 1
-        except Exception:
-            continue
-
-        if not isinstance(nullbr_result, dict):
-            continue
-        rows = nullbr_result.get("items") or nullbr_result.get("results") or []
-        if not isinstance(rows, list):
-            continue
-        nullbr_rows.extend([row for row in rows if isinstance(row, dict)])
-
-    if nullbr_success_count == 0:
-        nullbr_failed = True
-
-    if nullbr_rows:
-        best, candidates = _pick_best_tmdb_match(
-            title=normalized_title,
-            media_type=normalized_type,
-            year=year,
-            items=nullbr_rows,
-            title_variants_override=all_title_variants,
-        )
-        if best:
-            tmdb_value = int(best["tmdb_id"])
-            title_cache_key = _build_tmdb_cache_key(normalized_title, year, normalized_type)
-            _set_tmdb_id_cache(title_cache_key, tmdb_value)
-            if normalized_douban_id:
-                subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
-                _set_subject_tmdb_cache(subject_cache_key, tmdb_value)
-            return {
-                "resolved": True,
-                "media_type": normalized_type,
-                "tmdb_id": tmdb_value,
-                "imdb_id": merged_external_ids.get("imdb_id"),
-                "external_ids": merged_external_ids,
-                "confidence": float(best.get("score") or 0.0),
-                "reason": "matched_by_nullbr",
-                "evidence": {
-                    "source": "nullbr",
-                    "selection_note": best.get("selection_note"),
-                },
-                "candidates": candidates,
-            }
 
     tmdb_value: Optional[int] = None
     tmdb_failed = True
@@ -1263,7 +1180,7 @@ async def resolve_douban_explore_item(
         subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
         _set_subject_tmdb_cache(subject_cache_key, None)
 
-    if nullbr_failed and tmdb_failed:
+    if tmdb_failed:
         reason = "search_failed"
     elif had_negative_subject_cache:
         reason = "subject_cache_unresolved_rechecked"
@@ -1409,18 +1326,11 @@ async def _backfill_tmdb_ids(candidates: list[dict[str, Any]]) -> None:
         candidate_year = candidate.get("year") if isinstance(candidate.get("year"), str) else None
         try:
             async with semaphore:
-                resolved_id = await asyncio.to_thread(
-                    _resolve_tmdb_id_by_nullbr,
-                    candidate_title,
-                    media_type,
-                    candidate_year,
+                resolved_id = await _resolve_tmdb_id_by_tmdb(
+                    title=candidate_title,
+                    media_type=media_type,
+                    year=candidate_year,
                 )
-                if not resolved_id:
-                    resolved_id = await _resolve_tmdb_id_by_tmdb(
-                        title=candidate_title,
-                        media_type=media_type,
-                        year=candidate_year,
-                    )
                 _set_tmdb_id_cache(cache_key, resolved_id)
                 if douban_id:
                     subject_cache_key = _build_subject_tmdb_cache_key(douban_id, media_type)
