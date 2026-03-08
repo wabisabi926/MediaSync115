@@ -30,6 +30,13 @@
               {{ isSubscribed ? '已订阅（点击取消）' : '添加订阅' }}
             </el-button>
           </div>
+          <div v-if="doubanLink" class="external-links">
+            <span class="link-label">外部链接：</span>
+            <a v-if="doubanLink.douban_id" :href="`https://movie.douban.com/subject/${doubanLink.douban_id}/`" target="_blank" class="external-link douban-link">
+              <el-tag size="small" type="success">豆瓣</el-tag>
+            </a>
+            <span v-if="doubanLink.imdb_id" class="imdb-tag">IMDB: {{ doubanLink.imdb_id }}</span>
+          </div>
         </div>
       </div>
 
@@ -514,6 +521,7 @@ const ed2kLoading = ref(false)
 const isSubscribed = ref(false)
 const subscriptionId = ref(null)
 const subscribing = ref(false)
+const doubanLink = ref(null)
 
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
 const PAN115_CACHE_TTL_MS = 30 * 60 * 1000
@@ -845,10 +853,29 @@ const fetchMovie = async () => {
       vote_average: data.vote || data.vote_average,
       release_date: data.release_date || data.release
     }
+
+    // 获取 IMDB ID 和豆瓣链接
+    await fetchExternalIds(tmdbId)
   } catch (error) {
     ElMessage.error('获取电影信息失败')
   } finally {
     loading.value = false
+  }
+}
+
+const fetchExternalIds = async (tmdbId) => {
+  try {
+    // 调用 bridge API 获取 IMDB ID 和豆瓣信息
+    const { data } = await searchApi.getBridgeByImdbId(`tt${tmdbId}`, 'movie')
+    if (data?.imdb_id) {
+      doubanLink.value = {
+        imdb_id: data.imdb_id,
+        douban_id: data.douban?.douban_id || null
+      }
+    }
+  } catch (error) {
+    // 静默失败，不影响主流程
+    console.log('获取外部链接失败:', error)
   }
 }
 
@@ -1468,11 +1495,38 @@ onBeforeUnmount(() => {
         display: flex;
         gap: 12px;
         margin-top: auto;
-        
+
         .el-button {
           padding: 12px 24px;
           font-size: 14px;
           font-weight: 600;
+        }
+      }
+
+      .external-links {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: #909399;
+
+        .link-label {
+          color: var(--ms-text-secondary);
+        }
+
+        .external-link {
+          text-decoration: none;
+        }
+
+        .imdb-tag {
+          padding: 2px 6px;
+          background: rgba(245, 166, 35, 0.15);
+          border: 1px solid rgba(245, 166, 35, 0.3);
+          border-radius: 4px;
+          color: #f5a623;
+          font-size: 12px;
+          font-weight: 500;
         }
       }
     }

@@ -29,8 +29,17 @@
             <el-button v-if="detail.source_url" @click="openDoubanPage">在豆瓣打开</el-button>
           </div>
           <p class="mapping-tip">
-            <span v-if="mappedTmdbId">已匹配 TMDB：{{ mappedTmdbId }}</span>
-            <span v-else>未匹配 TMDB，当前页面会自动使用豆瓣名称关键词检索 115/磁链/ED2K 资源。</span>
+            <span v-if="mappedTmdbId">
+              已匹配 TMDB：
+              <router-link :to="`/${mediaType === 'tv' ? 'tv' : 'movie'}/${mappedTmdbId}`" class="tmdb-link">
+                {{ mappedTmdbId }}
+              </router-link>
+              <span v-if="detail.imdb_id" class="imdb-tag">IMDB: {{ detail.imdb_id }}</span>
+            </span>
+            <span v-else>
+              未匹配 TMDB，当前页面会自动使用豆瓣名称关键词检索 115/磁链/ED2K 资源。
+              <span v-if="detail.imdb_id" class="imdb-tag">IMDB: {{ detail.imdb_id }}</span>
+            </span>
           </p>
         </div>
       </div>
@@ -1658,6 +1667,27 @@ onBeforeUnmount(async () => {
         margin-top: 10px;
         color: #909399;
         font-size: 13px;
+
+        .tmdb-link {
+          color: #409eff;
+          text-decoration: none;
+          font-weight: 500;
+
+          &:hover {
+            text-decoration: underline;
+          }
+        }
+
+        .imdb-tag {
+          margin-left: 10px;
+          padding: 2px 6px;
+          background: rgba(245, 166, 35, 0.15);
+          border: 1px solid rgba(245, 166, 35, 0.3);
+          border-radius: 4px;
+          color: #f5a623;
+          font-size: 12px;
+          font-weight: 500;
+        }
       }
     }
   }

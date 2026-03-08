@@ -803,6 +803,74 @@ async def _resolve_tmdb_id_by_external_ids(
     return None, None, {}
 
 
+async def _resolve_tmdb_id_by_imdb_id(
+    imdb_id: str,
+    media_type: str,
+) -> tuple[Optional[int], Optional[str], dict[str, Any]]:
+    """通过 IMDB ID 直接查找 TMDB ID
+
+    Args:
+        imdb_id: IMDB ID，如 "tt1375666"
+        media_type: "movie" 或 "tv"
+
+    Returns:
+        (tmdb_id, reason, evidence) 元组
+    """
+    normalized_imdb = _normalize_external_id(imdb_id)
+    if not normalized_imdb:
+        return None, None, {}
+
+    normalized_type = "tv" if media_type == "tv" else "movie"
+
+    # 检查缓存
+    cache_key = _build_external_lookup_cache_key("imdb_id", normalized_imdb, normalized_type)
+    cache_hit, cached_tmdb_id = _get_cached_external_lookup(cache_key)
+    if cache_hit:
+        if cached_tmdb_id:
+            return (
+                int(cached_tmdb_id),
+                "matched_by_imdb_id",
+                {"external_source": "imdb_id", "external_id": normalized_imdb, "cache_hit": True},
+            )
+        return None, None, {}
+
+    try:
+        result = await tmdb_service.find_by_imdb_id(normalized_imdb)
+        if not result.get("found"):
+            _set_cached_external_lookup(cache_key, None)
+            return None, None, {}
+
+        # 根据媒体类型选择对应的结果
+        tmdb_item = result.get("movie") if normalized_type == "movie" else result.get("tv")
+        if not tmdb_item:
+            # 如果没有找到对应类型的结果，尝试使用另一个类型
+            tmdb_item = result.get("tv") if normalized_type == "movie" else result.get("movie")
+
+        if not tmdb_item:
+            _set_cached_external_lookup(cache_key, None)
+            return None, None, {}
+
+        tmdb_id = tmdb_item.get("tmdb_id")
+        if not tmdb_id:
+            _set_cached_external_lookup(cache_key, None)
+            return None, None, {}
+
+        _set_cached_external_lookup(cache_key, tmdb_id)
+        return (
+            int(tmdb_id),
+            "matched_by_imdb_id",
+            {
+                "external_source": "imdb_id",
+                "external_id": normalized_imdb,
+                "cache_hit": False,
+                "tmdb_item": tmdb_item,
+            },
+        )
+    except Exception:
+        _set_cached_external_lookup(cache_key, None)
+        return None, None, {}
+
+
 async def _resolve_tmdb_id_by_wikidata(
     douban_id: str,
     media_type: str,
@@ -985,6 +1053,8 @@ async def resolve_douban_explore_item(
             "resolved": True,
             "media_type": normalized_type,
             "tmdb_id": tmdb_value,
+            "imdb_id": merged_external_ids.get("imdb_id"),
+            "external_ids": merged_external_ids,
             "confidence": 1.0,
             "reason": "provided_tmdb_id",
             "evidence": {"source": "provided_tmdb_id"},
@@ -1000,6 +1070,8 @@ async def resolve_douban_explore_item(
                     "resolved": True,
                     "media_type": normalized_type,
                     "tmdb_id": int(cached_tmdb_id),
+                    "imdb_id": merged_external_ids.get("imdb_id"),
+                    "external_ids": merged_external_ids,
                     "confidence": 0.99,
                     "reason": "subject_cache_hit",
                     "evidence": {"source": "subject_cache_hit"},
@@ -1019,6 +1091,31 @@ async def resolve_douban_explore_item(
     if wikidata_qid and not merged_external_ids.get("wikidata_id"):
         merged_external_ids["wikidata_id"] = wikidata_qid
 
+    # 优先使用 IMDB ID 直接查找 TMDB（最精确的匹配方式）
+    imdb_id = merged_external_ids.get("imdb_id")
+    if imdb_id:
+        imdb_tmdb_id, imdb_reason, imdb_evidence = await _resolve_tmdb_id_by_imdb_id(imdb_id, normalized_type)
+        if imdb_tmdb_id:
+            # 验证 TMDB 返回的 external_ids 是否与我们的 IMDB ID 匹配
+            verify_ok = await _verify_tmdb_external_ids(imdb_tmdb_id, normalized_type, merged_external_ids)
+            if verify_ok:
+                title_cache_key = _build_tmdb_cache_key(normalized_title, year, normalized_type)
+                _set_tmdb_id_cache(title_cache_key, imdb_tmdb_id)
+                if normalized_douban_id:
+                    subject_cache_key = _build_subject_tmdb_cache_key(normalized_douban_id, normalized_type)
+                    _set_subject_tmdb_cache(subject_cache_key, imdb_tmdb_id)
+                return {
+                    "resolved": True,
+                    "media_type": normalized_type,
+                    "tmdb_id": int(imdb_tmdb_id),
+                    "imdb_id": imdb_id,
+                    "external_ids": merged_external_ids,
+                    "confidence": 1.0,
+                    "reason": imdb_reason or "matched_by_imdb_id",
+                    "evidence": imdb_evidence,
+                    "candidates": [],
+                }
+
     if normalized_douban_id:
         wikidata_tmdb_id, wikidata_evidence = await _resolve_tmdb_id_by_wikidata(normalized_douban_id, normalized_type)
         if wikidata_tmdb_id:
@@ -1032,6 +1129,8 @@ async def resolve_douban_explore_item(
                     "resolved": True,
                     "media_type": normalized_type,
                     "tmdb_id": int(wikidata_tmdb_id),
+                    "imdb_id": merged_external_ids.get("imdb_id"),
+                    "external_ids": merged_external_ids,
                     "confidence": 1.0,
                     "reason": "matched_by_wikidata",
                     "evidence": {
@@ -1055,6 +1154,8 @@ async def resolve_douban_explore_item(
             "resolved": True,
             "media_type": normalized_type,
             "tmdb_id": int(external_tmdb_id),
+            "imdb_id": merged_external_ids.get("imdb_id"),
+            "external_ids": merged_external_ids,
             "confidence": 0.98,
             "reason": external_reason or "matched_by_tmdb_find_external",
             "evidence": external_evidence,
@@ -1066,6 +1167,8 @@ async def resolve_douban_explore_item(
             "resolved": False,
             "media_type": normalized_type,
             "tmdb_id": None,
+            "imdb_id": merged_external_ids.get("imdb_id"),
+            "external_ids": merged_external_ids,
             "confidence": 0.0,
             "reason": "missing_title",
             "evidence": {"external_ids": merged_external_ids},
@@ -1112,6 +1215,8 @@ async def resolve_douban_explore_item(
                 "resolved": True,
                 "media_type": normalized_type,
                 "tmdb_id": tmdb_value,
+                "imdb_id": merged_external_ids.get("imdb_id"),
+                "external_ids": merged_external_ids,
                 "confidence": float(best.get("score") or 0.0),
                 "reason": "matched_by_nullbr",
                 "evidence": {
@@ -1141,6 +1246,8 @@ async def resolve_douban_explore_item(
             "resolved": True,
             "media_type": normalized_type,
             "tmdb_id": tmdb_value,
+            "imdb_id": merged_external_ids.get("imdb_id"),
+            "external_ids": merged_external_ids,
             "confidence": 0.93,
             "reason": "matched_by_tmdb_typed_search",
             "evidence": {"source": "tmdb_search"},
@@ -1162,6 +1269,8 @@ async def resolve_douban_explore_item(
         "resolved": False,
         "media_type": normalized_type,
         "tmdb_id": None,
+        "imdb_id": merged_external_ids.get("imdb_id"),
+        "external_ids": merged_external_ids,
         "confidence": 0.0,
         "reason": reason,
         "evidence": {

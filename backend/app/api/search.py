@@ -2362,3 +2362,107 @@ def get_collection(collection_id: int):
 def get_collection_pan115(collection_id: int, page: int = Query(1, ge=1)):
     result = nullbr_service.get_collection_pan115(collection_id, page)
     return result
+
+
+@router.get("/bridge/imdb/{imdb_id}")
+async def get_bridge_by_imdb_id(
+    imdb_id: str,
+    media_type: str = Query("movie", pattern="^(movie|tv)$", description="媒体类型: movie 或 tv"),
+):
+    """通过 IMDB ID 获取豆瓣和 TMDB 的关联信息
+
+    这个接口作为桥梁，通过 IMDB ID 关联豆瓣和 TMDB 的数据：
+    - 从 TMDB 查找对应的影片信息
+    - 尝试从 Wikidata 查找对应的豆瓣 ID
+
+    Args:
+        imdb_id: IMDB ID，如 "tt1375666"
+        media_type: 媒体类型，movie 或 tv
+
+    Returns:
+        {
+            "imdb_id": "tt1375666",
+            "media_type": "movie",
+            "tmdb": {
+                "found": True,
+                "tmdb_id": 27205,
+                "title": "Inception",
+                "poster_path": "/...",
+                ...
+            },
+            "douban": {
+                "found": True,
+                "douban_id": "3541415",
+                "title": "盗梦空间",
+                ...
+            }
+        }
+    """
+    normalized_imdb = str(imdb_id or "").strip().lower()
+    if not normalized_imdb or not normalized_imdb.startswith("tt"):
+        raise HTTPException(status_code=400, detail="无效的 IMDB ID")
+
+    normalized_type = "tv" if media_type == "tv" else "movie"
+
+    # 1. 从 TMDB 查找
+    tmdb_result = {"found": False, "data": None}
+    try:
+        tmdb_find_result = await tmdb_service.find_by_imdb_id(normalized_imdb)
+        if tmdb_find_result.get("found"):
+            tmdb_item = tmdb_find_result.get("movie") if normalized_type == "movie" else tmdb_find_result.get("tv")
+            if not tmdb_item:
+                # 如果没有找到对应类型的结果，尝试使用另一个类型
+                tmdb_item = tmdb_find_result.get("tv") if normalized_type == "movie" else tmdb_find_result.get("movie")
+
+            if tmdb_item:
+                tmdb_result = {
+                    "found": True,
+                    "tmdb_id": tmdb_item.get("tmdb_id"),
+                    "title": tmdb_item.get("title") or tmdb_item.get("name"),
+                    "poster_path": tmdb_item.get("poster_path"),
+                    "overview": tmdb_item.get("overview"),
+                    "vote_average": tmdb_item.get("vote_average"),
+                    "release_date": tmdb_item.get("release_date") or tmdb_item.get("first_air_date"),
+                    "media_type": tmdb_item.get("media_type"),
+                }
+    except Exception as exc:
+        tmdb_result["error"] = str(exc)
+
+    # 2. 尝试从 Wikidata 查找豆瓣 ID
+    douban_result = {"found": False, "data": None}
+    try:
+        # 查询 Wikidata 获取豆瓣 ID
+        query = f'''
+SELECT ?doubanId WHERE {{
+  ?item wdt:P345 "{normalized_imdb}" .
+  OPTIONAL {{ ?item wdt:P4529 ?doubanId . }}
+}}
+LIMIT 1
+'''.strip()
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                "https://query.wikidata.org/sparql",
+                params={"query": query, "format": "json"},
+                headers={"Accept": "application/sparql-results+json"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            bindings = (((payload or {}).get("results") or {}).get("bindings") or [])
+            if bindings:
+                douban_id = ((bindings[0].get("doubanId") or {}).get("value"))
+                if douban_id:
+                    douban_result = {
+                        "found": True,
+                        "douban_id": douban_id,
+                        "source": "wikidata",
+                    }
+    except Exception:
+        pass
+
+    return {
+        "imdb_id": normalized_imdb,
+        "media_type": normalized_type,
+        "tmdb": tmdb_result,
+        "douban": douban_result,
+    }

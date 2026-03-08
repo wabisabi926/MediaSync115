@@ -156,6 +156,99 @@ class DownloadRecordUpdate(BaseModel):
     error_message: Optional[str] = None
 
 
+async def _enrich_subscription_ids(
+    douban_id: Optional[str],
+    tmdb_id: Optional[int],
+    media_type: MediaType,
+) -> dict[str, Any]:
+    """自动补全订阅的 ID 信息（douban_id, tmdb_id, imdb_id）
+
+    通过 IMDB ID 作为桥梁，关联豆瓣和 TMDB 的数据。
+    """
+    from app.services.douban_explore_service import (
+        _query_wikidata_bridge,
+        _normalize_external_id,
+    )
+
+    result: dict[str, Any] = {}
+
+    # 如果提供了豆瓣 ID，尝试获取 IMDB ID 和 TMDB ID
+    if douban_id and not tmdb_id:
+        try:
+            wikidata_bridge = await _query_wikidata_bridge(douban_id)
+            imdb_id = _normalize_external_id(wikidata_bridge.get("imdb_id"))
+            if imdb_id:
+                result["imdb_id"] = imdb_id
+
+            # 根据媒体类型获取对应的 TMDB ID
+            normalized_type = "tv" if media_type == MediaType.TV else "movie"
+            tmdb_key = "tmdb_tv_id" if normalized_type == "tv" else "tmdb_movie_id"
+            wikidata_tmdb = wikidata_bridge.get(tmdb_key)
+            if wikidata_tmdb:
+                try:
+                    result["tmdb_id"] = int(wikidata_tmdb)
+                except (ValueError, TypeError):
+                    pass
+
+            # 如果 Wikidata 没有 TMDB ID，但有 IMDB ID，尝试从 TMDB 查找
+            if "tmdb_id" not in result and imdb_id:
+                try:
+                    tmdb_find_result = await tmdb_service.find_by_imdb_id(imdb_id)
+                    if tmdb_find_result.get("found"):
+                        tmdb_item = tmdb_find_result.get("movie") if normalized_type == "movie" else tmdb_find_result.get("tv")
+                        if not tmdb_item:
+                            tmdb_item = tmdb_find_result.get("tv") if normalized_type == "movie" else tmdb_find_result.get("movie")
+                        if tmdb_item:
+                            result["tmdb_id"] = tmdb_item.get("tmdb_id")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # 如果提供了 TMDB ID，尝试获取 IMDB ID 和豆瓣 ID
+    elif tmdb_id and not douban_id:
+        try:
+            normalized_type = "tv" if media_type == MediaType.TV else "movie"
+            if normalized_type == "tv":
+                external_ids = await tmdb_service.get_tv_external_ids(tmdb_id)
+            else:
+                external_ids = await tmdb_service.get_movie_external_ids(tmdb_id)
+
+            imdb_id = _normalize_external_id(external_ids.get("imdb_id"))
+            if imdb_id:
+                result["imdb_id"] = imdb_id
+
+                # 尝试从 Wikidata 获取豆瓣 ID
+                try:
+                    query = f'''
+SELECT ?doubanId WHERE {{
+  ?item wdt:P345 "{imdb_id}" .
+  OPTIONAL {{ ?item wdt:P4529 ?doubanId . }}
+}}
+LIMIT 1
+'''.strip()
+
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        wikidata_response = await client.get(
+                            "https://query.wikidata.org/sparql",
+                            params={"query": query, "format": "json"},
+                            headers={"Accept": "application/sparql-results+json"},
+                        )
+                        wikidata_response.raise_for_status()
+                        wikidata_payload = wikidata_response.json()
+                        bindings = (((wikidata_payload or {}).get("results") or {}).get("bindings") or [])
+                        if bindings:
+                            douban_id_from_wiki = ((bindings[0].get("doubanId") or {}).get("value"))
+                            if douban_id_from_wiki:
+                                result["douban_id"] = douban_id_from_wiki
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return result
+
+
 @router.post("")
 async def create_subscription(
     subscription: SubscriptionCreate,
@@ -180,6 +273,15 @@ async def create_subscription(
         raise HTTPException(status_code=400, detail="Subscription already exists")
 
     payload = subscription.model_dump()
+
+    # 自动补全 ID 信息
+    enriched_ids = await _enrich_subscription_ids(
+        subscription.douban_id,
+        subscription.tmdb_id,
+        subscription.media_type,
+    )
+    payload.update(enriched_ids)
+
     payload["poster_path"] = await resolve_tmdb_poster_path(
         payload.get("tmdb_id"),
         payload.get("media_type"),

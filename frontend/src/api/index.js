@@ -114,7 +114,8 @@ export const searchApi = {
   getTvVideo: (tmdbId, season, episode) => api.get(`/search/tv/${tmdbId}/video`, { params: { season, episode } }),
 
   getCollection: (collectionId) => api.get(`/search/collection/${collectionId}`),
-  getCollectionPan115: (collectionId, page = 1) => api.get(`/search/collection/${collectionId}/115`, { params: { page } })
+  getCollectionPan115: (collectionId, page = 1) => api.get(`/search/collection/${collectionId}/115`, { params: { page } }),
+  getBridgeByImdbId: (imdbId, mediaType = 'movie') => api.get(`/search/bridge/imdb/${imdbId}`, { params: { media_type: mediaType } })
 }
 
 export const pansouApi = {

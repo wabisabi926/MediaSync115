@@ -238,5 +238,57 @@ class TmdbService:
         params = self._required_params()
         return await self._get(f"/tv/{tmdb_id}/season/{season_number}/episode/{episode_number}", params)
 
+    async def find_by_imdb_id(self, imdb_id: str) -> dict[str, Any]:
+        """通过 IMDB ID 查找影片（电影或剧集）
+
+        Args:
+            imdb_id: IMDB ID，如 "tt1375666"
+
+        Returns:
+            包含查找结果的字典，结构如下：
+            {
+                "imdb_id": "tt1375666",
+                "found": True,
+                "movie": {...} or None,
+                "tv": {...} or None,
+                "media_type": "movie" | "tv" | None
+            }
+        """
+        normalized_id = str(imdb_id or "").strip()
+        if not normalized_id:
+            return {"imdb_id": "", "found": False, "movie": None, "tv": None, "media_type": None}
+
+        result = await self.find_by_external_id(normalized_id, "imdb_id")
+        items = result.get("items", [])
+
+        movie_item = None
+        tv_item = None
+
+        for item in items:
+            media_type = item.get("media_type")
+            if media_type == "movie" and movie_item is None:
+                movie_item = item
+            elif media_type == "tv" and tv_item is None:
+                tv_item = item
+
+        # 确定媒体类型
+        media_type = None
+        if movie_item and tv_item:
+            # 如果同时找到电影和剧集，优先返回电影（通常 IMDB ID 更精确对应电影）
+            media_type = "movie"
+        elif movie_item:
+            media_type = "movie"
+        elif tv_item:
+            media_type = "tv"
+
+        return {
+            "imdb_id": normalized_id,
+            "found": movie_item is not None or tv_item is not None,
+            "movie": movie_item,
+            "tv": tv_item,
+            "media_type": media_type,
+            "all_results": items,
+        }
+
 
 tmdb_service = TmdbService()
