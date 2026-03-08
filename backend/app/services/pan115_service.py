@@ -460,6 +460,10 @@ class Pan115Service:
                     error_text = str(exc)
                     if self._is_auth_related_error(error_text):
                         raise
+                    # 仅当端点本身不可用(405)时，才降级尝试其它 share/snap 端点。
+                    # 业务错误（如“请输入访问码/访问码错误/分享失效”）应直接抛出，避免被后续端点错误覆盖。
+                    if not self._is_method_not_allowed_error(error_text):
+                        raise
                     if self._is_method_not_allowed_error(error_text):
                         if retry < max_retries_per_attempt - 1:
                             await asyncio.sleep(0.6 * (retry + 1))
