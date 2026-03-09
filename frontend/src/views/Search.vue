@@ -1200,11 +1200,6 @@ const handleBackToExplore = () => {
   currentPage.value = 1
   lastSearchKeyword.value = ''
   activeSearchService.value = ''
-  homePrefetchPaused.value = false
-  clearHomePrefetchTimers()
-  for (const section of exploreSections.value) {
-    scheduleHomeSectionPrefetch(section.key)
-  }
 }
 
 const handleSearch = async () => {
@@ -1220,8 +1215,6 @@ const handleSearch = async () => {
 
   loading.value = true
   searched.value = true
-  homePrefetchPaused.value = true
-  clearHomePrefetchTimers()
 
   try {
     const { data } = await searchApi.search(keyword, currentPage.value)
@@ -1239,10 +1232,6 @@ const handleSearch = async () => {
     ElMessage.error('搜索失败，请稍后重试')
   } finally {
     loading.value = false
-    homePrefetchPaused.value = false
-    for (const section of exploreSections.value) {
-      scheduleHomeSectionPrefetch(section.key)
-    }
   }
 }
 
