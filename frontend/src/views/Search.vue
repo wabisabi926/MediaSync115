@@ -410,18 +410,13 @@ const markSubscribedOnItem = (item) => {
                       isSubscribedByImdbId(imdbId)
 }
 
-const collectEmbyStatusPayload = (items = []) => {
-  const deduped = new Map()
-  for (const item of items) {
-    const key = buildSubscribedKey(item?.media_type, item?.tmdb_id || item?.tmdbid)
-    if (!key || deduped.has(key)) continue
-    const [mediaType, tmdbId] = key.split(':')
-    deduped.set(key, {
-      media_type: mediaType,
-      tmdb_id: Number(tmdbId)
-    })
+const mergeEmbyStatusMap = (rawMap = {}) => {
+  if (!rawMap || typeof rawMap !== 'object') return
+  const nextMap = new Map(embyStatusMap.value)
+  for (const [key, value] of Object.entries(rawMap)) {
+    nextMap.set(key, value || {})
   }
-  return Array.from(deduped.values())
+  embyStatusMap.value = nextMap
 }
 
 const normalizeExploreQueueMediaType = (rawType) => {
@@ -563,26 +558,6 @@ const applySubscribedFlags = () => {
       markSubscribedOnItem(item)
       markEmbyOnItem(item)
     }
-  }
-}
-
-const refreshEmbyStatus = async (items = []) => {
-  const payload = collectEmbyStatusPayload(items)
-  if (!payload.length) {
-    applySubscribedFlags()
-    return
-  }
-  try {
-    const { data } = await searchApi.getEmbyStatusMap(payload)
-    const nextItems = data?.items || {}
-    const nextMap = new Map(embyStatusMap.value)
-    for (const [key, value] of Object.entries(nextItems)) {
-      nextMap.set(key, value || {})
-    }
-    embyStatusMap.value = nextMap
-    applySubscribedFlags()
-  } catch (error) {
-    console.error('Failed to refresh Emby status:', error)
   }
 }
 
@@ -950,7 +925,6 @@ const appendItemsToSection = (sectionKey, incomingItems = []) => {
   }
   if (!deduped.length) return 0
   section.items = section.items.concat(deduped)
-  refreshEmbyStatus(deduped)
   return deduped.length
 }
 
@@ -1000,6 +974,7 @@ const fetchHomeSectionNextBatch = async (sectionKey) => {
   const start = meta.nextOffset
   const task = (async () => {
     const payload = await requestHomeSectionBatch(sectionKey, start)
+    mergeEmbyStatusMap(payload?.emby_status_map || {})
     const payloadItems = normalizeExploreSectionItems(
       Array.isArray(payload.items) ? payload.items : [],
       start + 1
@@ -1302,6 +1277,7 @@ const fetchExploreSections = async () => {
   exploreLoading.value = true
   try {
     const { data } = await searchApi.getExploreHomeSections(exploreSource.value)
+    mergeEmbyStatusMap(data?.emby_status_map || {})
     const sections = Array.isArray(data.sections) ? data.sections : []
     homeSectionMetaMap.clear()
     exploreSections.value = sections.map((section) => {
@@ -1320,7 +1296,6 @@ const fetchExploreSections = async () => {
       }
     })
     applySubscribedFlags()
-    refreshEmbyStatus(exploreSections.value.flatMap((section) => section.items || []))
     syncExploreQueueItemStates()
 
     await nextTick()
@@ -1385,12 +1360,12 @@ const handleSearch = async () => {
   try {
     const { data } = await searchApi.search(keyword, currentPage.value)
     const items = data.items || data.results || []
+    mergeEmbyStatusMap(data?.emby_status_map || {})
     activeSearchService.value = data.search_service || ''
     results.value = items.map((item, index) =>
       normalizeSearchResultItem(item, index, activeSearchService.value)
     )
     applySubscribedFlags()
-    refreshEmbyStatus(results.value)
     const backendPages = Number(data.total_pages) || 0
     totalPages.value = backendPages || (results.value.length > 0 ? 1 : 0)
   } catch (error) {

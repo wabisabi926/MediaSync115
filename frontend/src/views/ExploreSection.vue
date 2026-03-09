@@ -173,18 +173,13 @@ const applySubscribedFlags = () => {
   }
 }
 
-const collectEmbyStatusPayload = (items = []) => {
-  const deduped = new Map()
-  for (const item of items) {
-    const key = buildSubscribedKey(item?.media_type, item?.tmdb_id)
-    if (!key || deduped.has(key)) continue
-    const [mediaType, tmdbId] = key.split(':')
-    deduped.set(key, {
-      media_type: mediaType,
-      tmdb_id: Number(tmdbId)
-    })
+const mergeEmbyStatusMap = (rawMap = {}) => {
+  if (!rawMap || typeof rawMap !== 'object') return
+  const nextMap = new Map(embyStatusMap.value)
+  for (const [key, value] of Object.entries(rawMap)) {
+    nextMap.set(key, value || {})
   }
-  return Array.from(deduped.values())
+  embyStatusMap.value = nextMap
 }
 
 const normalizeExploreQueueMediaType = (rawType) => {
@@ -355,26 +350,6 @@ const refreshSubscribedMap = async () => {
     applySubscribedFlags()
   } catch {
     // ignore subscription sync errors
-  }
-}
-
-const refreshEmbyStatus = async (items = []) => {
-  const payload = collectEmbyStatusPayload(items)
-  if (!payload.length) {
-    applySubscribedFlags()
-    return
-  }
-  try {
-    const { data } = await searchApi.getEmbyStatusMap(payload)
-    const nextItems = data?.items || {}
-    const nextMap = new Map(embyStatusMap.value)
-    for (const [key, value] of Object.entries(nextItems)) {
-      nextMap.set(key, value || {})
-    }
-    embyStatusMap.value = nextMap
-    applySubscribedFlags()
-  } catch (error) {
-    console.error('Failed to refresh Emby status:', error)
   }
 }
 
@@ -697,7 +672,6 @@ const appendUniqueItems = (items) => {
   }
   if (!nextItems.length) return 0
   allItems.value = [...allItems.value, ...nextItems]
-  refreshEmbyStatus(nextItems)
   return nextItems.length
 }
 
@@ -716,6 +690,7 @@ const fetchNextBatch = async ({ refresh = false, silent = false } = {}) => {
     const requestStart = nextOffset.value
     batchLoadPromise = (async () => {
       const payload = await requestSectionBatch(sectionKey, requestStart, { refresh })
+      mergeEmbyStatusMap(payload?.emby_status_map || {})
       const batchItems = Array.isArray(payload.items) ? payload.items : []
       const payloadTotal = Number(payload.total) || 0
       const payloadStart = Number(payload.start ?? requestStart) || 0

@@ -86,6 +86,9 @@ IMAGE_PROXY_CACHE_TTL_SECONDS = 60 * 60
 IMAGE_PROXY_CACHE_MAX_ITEMS = 512
 _image_proxy_cache: "OrderedDict[str, tuple[float, bytes, str]]" = OrderedDict()
 _image_proxy_cache_lock = asyncio.Lock()
+EMBY_BADGE_CACHE_TTL_SECONDS = 60 * 10
+_emby_badge_cache: dict[str, dict[str, Any]] = {}
+_emby_badge_cache_lock = asyncio.Lock()
 _pan115_share_url_pattern = re.compile(
     r"(https?://(?:115(?:cdn)?\.com/s/[A-Za-z0-9]+(?:[^\s\"'<>]*)?|share\.115\.com/[A-Za-z0-9]+(?:[^\s\"'<>]*)?))",
     re.IGNORECASE,
@@ -135,6 +138,131 @@ class EmbyStatusMapItem(BaseModel):
 
 class EmbyStatusMapRequest(BaseModel):
     items: list[EmbyStatusMapItem]
+
+
+def _normalize_emby_media_type(raw_media_type: Any) -> str:
+    value = str(raw_media_type or "").strip().lower()
+    if value == "tv":
+        return "tv"
+    if value == "movie":
+        return "movie"
+    return ""
+
+
+def _extract_emby_status_candidates(items: list[dict[str, Any]]) -> list[tuple[str, str, int]]:
+    candidates: list[tuple[str, str, int]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        media_type = _normalize_emby_media_type(item.get("media_type"))
+        if not media_type:
+            continue
+        tmdb_id = int(item.get("tmdb_id") or 0)
+        if tmdb_id <= 0:
+            continue
+        key = f"{media_type}:{tmdb_id}"
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append((key, media_type, tmdb_id))
+    return candidates
+
+
+def _collect_section_items(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        items = section.get("items")
+        if not isinstance(items, list):
+            continue
+        rows.extend([item for item in items if isinstance(item, dict)])
+    return rows
+
+
+async def _get_cached_emby_badge_status(cache_key: str) -> dict[str, Any] | None:
+    now_ts = time.time()
+    async with _emby_badge_cache_lock:
+        cached = _emby_badge_cache.get(cache_key)
+        if not cached:
+            return None
+        expires_at = float(cached.get("expires_at") or 0)
+        if expires_at <= now_ts:
+            _emby_badge_cache.pop(cache_key, None)
+            return None
+        payload = cached.get("payload")
+        return dict(payload) if isinstance(payload, dict) else None
+
+
+async def _set_cached_emby_badge_status(cache_key: str, payload: dict[str, Any]) -> None:
+    async with _emby_badge_cache_lock:
+        _emby_badge_cache[cache_key] = {
+            "expires_at": time.time() + EMBY_BADGE_CACHE_TTL_SECONDS,
+            "payload": dict(payload),
+        }
+        if len(_emby_badge_cache) > 2000:
+            oldest_key = min(
+                _emby_badge_cache.items(),
+                key=lambda item: float(item[1].get("expires_at") or 0),
+            )[0]
+            _emby_badge_cache.pop(oldest_key, None)
+
+
+async def _resolve_emby_status_payload(media_type: str, tmdb_id: int) -> dict[str, Any]:
+    if media_type == "tv":
+        tv_status = await tv_missing_service.get_tv_missing_status(tmdb_id, include_specials=False)
+        status_text = str(tv_status.get("status") or "")
+        missing_count = int((tv_status.get("counts") or {}).get("missing") or 0)
+        exists_in_emby = status_text == "ok" and missing_count == 0
+        return {
+            "exists_in_emby": exists_in_emby,
+            "status": status_text or "request_failed",
+            "matched_type": "tv_complete" if exists_in_emby else "",
+        }
+
+    movie_status = await emby_service.get_movie_status_by_tmdb(tmdb_id)
+    status_text = str(movie_status.get("status") or "")
+    exists_in_emby = status_text == "ok" and bool(movie_status.get("exists"))
+    return {
+        "exists_in_emby": exists_in_emby,
+        "status": status_text or "request_failed",
+        "matched_type": "movie" if exists_in_emby else "",
+    }
+
+
+async def _build_emby_status_map(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    candidates = _extract_emby_status_candidates(items)
+    if not candidates:
+        return {}
+
+    status_map: dict[str, dict[str, Any]] = {}
+    uncached: list[tuple[str, str, int]] = []
+    for cache_key, media_type, tmdb_id in candidates:
+        cached_payload = await _get_cached_emby_badge_status(cache_key)
+        if cached_payload is not None:
+            status_map[cache_key] = cached_payload
+            continue
+        uncached.append((cache_key, media_type, tmdb_id))
+
+    results = await asyncio.gather(
+        *(_resolve_emby_status_payload(media_type, tmdb_id) for _, media_type, tmdb_id in uncached),
+        return_exceptions=True,
+    )
+    for (cache_key, _, _), result in zip(uncached, results):
+        if isinstance(result, Exception):
+            payload = {
+                "exists_in_emby": False,
+                "status": "request_failed",
+                "matched_type": "",
+            }
+            logger.warning("resolve emby status failed for %s: %s", cache_key, result)
+        else:
+            payload = result
+        status_map[cache_key] = payload
+        await _set_cached_emby_badge_status(cache_key, payload)
+
+    return status_map
 
 
 def _extract_search_items(payload: Any) -> list[dict]:
@@ -798,6 +926,8 @@ async def search(
         payload = await tmdb_service.search_multi(keyword, page)
         if not isinstance(payload, dict):
             payload = {}
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        payload["emby_status_map"] = await _build_emby_status_map(items)
         return payload
     except ValueError as exc:
         if "TMDB_API_KEY is not configured" in str(exc):
@@ -870,11 +1000,13 @@ async def get_explore_popular_sections(
     if not sections:
         raise HTTPException(status_code=502, detail="Failed to fetch all recommendation sections")
 
+    emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
     return {
         "source": "popular-movies-data.stevenlu.com",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "sections": sections,
         "errors": errors,
+        "emby_status_map": emby_status_map,
     }
 
 
@@ -920,13 +1052,16 @@ async def get_explore_douban_sections(
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "sections": fallback.get("sections", []),
             "errors": errors + fallback_errors,
+            "emby_status_map": fallback.get("emby_status_map", {}),
         }
 
+    emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
     return {
         "source": "douban-frodo",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "sections": sections,
         "errors": errors,
+        "emby_status_map": emby_status_map,
     }
 
 
@@ -974,11 +1109,13 @@ async def get_explore_sections(
                     raise HTTPException(status_code=400, detail="TMDB API Key 未配置")
             raise HTTPException(status_code=502, detail="Failed to fetch TMDB explore sections")
 
+        emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
         return {
             "source": "tmdb",
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "sections": sections,
             "errors": errors,
+            "emby_status_map": emby_status_map,
         }
 
     async with httpx.AsyncClient(timeout=12.0, http2=True) as client:
@@ -1018,13 +1155,16 @@ async def get_explore_sections(
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "sections": fallback.get("sections", []),
             "errors": errors + fallback_errors,
+            "emby_status_map": fallback.get("emby_status_map", {}),
         }
 
+    emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
     return {
         "source": "douban-frodo",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "sections": sections,
         "errors": errors,
+        "emby_status_map": emby_status_map,
     }
 
 
@@ -1072,11 +1212,13 @@ async def get_explore_home(
                     raise HTTPException(status_code=400, detail="TMDB API Key 未配置")
             raise HTTPException(status_code=502, detail="Failed to fetch TMDB explore home")
 
+        emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
         return {
             "source": "tmdb",
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "sections": sections,
             "errors": errors,
+            "emby_status_map": emby_status_map,
         }
 
     async with httpx.AsyncClient(timeout=12.0, http2=True) as client:
@@ -1122,72 +1264,23 @@ async def get_explore_home(
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "sections": fallback.get("sections", []),
             "errors": errors + fallback_errors,
+            "emby_status_map": fallback.get("emby_status_map", {}),
         }
 
+    emby_status_map = await _build_emby_status_map(_collect_section_items(sections))
     return {
         "source": "douban-frodo",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "sections": sections,
         "errors": errors,
+        "emby_status_map": emby_status_map,
     }
 
 
 @router.post("/emby/status-map")
 async def get_emby_status_map(payload: EmbyStatusMapRequest):
-    deduped_items: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
-    for raw_item in payload.items:
-        media_type = "tv" if str(raw_item.media_type or "").lower() == "tv" else "movie"
-        tmdb_id = int(raw_item.tmdb_id or 0)
-        if tmdb_id <= 0:
-            continue
-        key = (media_type, tmdb_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped_items.append(key)
-
-    async def resolve_item_status(media_type: str, tmdb_id: int) -> tuple[str, dict[str, Any]]:
-        item_key = f"{media_type}:{tmdb_id}"
-        if media_type == "tv":
-            tv_status = await tv_missing_service.get_tv_missing_status(tmdb_id, include_specials=False)
-            status_text = str(tv_status.get("status") or "")
-            missing_count = int((tv_status.get("counts") or {}).get("missing") or 0)
-            exists_in_emby = status_text == "ok" and missing_count == 0
-            return item_key, {
-                "exists_in_emby": exists_in_emby,
-                "status": status_text or "request_failed",
-                "matched_type": "tv_complete" if exists_in_emby else "",
-            }
-
-        movie_status = await emby_service.get_movie_status_by_tmdb(tmdb_id)
-        status_text = str(movie_status.get("status") or "")
-        exists_in_emby = status_text == "ok" and bool(movie_status.get("exists"))
-        return item_key, {
-            "exists_in_emby": exists_in_emby,
-            "status": status_text or "request_failed",
-            "matched_type": "movie" if exists_in_emby else "",
-        }
-
-    results = await asyncio.gather(
-        *(resolve_item_status(media_type, tmdb_id) for media_type, tmdb_id in deduped_items),
-        return_exceptions=True,
-    )
-
-    status_map: dict[str, dict[str, Any]] = {}
-    for item_key, item_payload in zip((f"{media_type}:{tmdb_id}" for media_type, tmdb_id in deduped_items), results):
-        if isinstance(item_payload, Exception):
-            status_map[item_key] = {
-                "exists_in_emby": False,
-                "status": "request_failed",
-                "matched_type": "",
-            }
-            logger.warning("resolve emby status failed for %s: %s", item_key, item_payload)
-            continue
-        resolved_key, resolved_payload = item_payload
-        status_map[resolved_key] = resolved_payload
-
-    return {"items": status_map}
+    items = [row.model_dump() for row in payload.items]
+    return {"items": await _build_emby_status_map(items)}
 
 
 @router.get("/explore/section/{section_key}")
@@ -1212,6 +1305,7 @@ async def get_explore_section(
                 raise HTTPException(status_code=400, detail="TMDB API Key 未配置")
             raise HTTPException(status_code=502, detail=f"Failed to fetch section: {str(exc)}")
 
+        items = payload.get("items", []) if isinstance(payload.get("items"), list) else []
         return {
             "source": "tmdb",
             "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -1224,8 +1318,9 @@ async def get_explore_section(
                 "total": payload["total"],
                 "start": payload.get("start", start),
                 "count": payload.get("count", limit),
-                "items": payload.get("items", []),
+                "items": items,
             },
+            "emby_status_map": await _build_emby_status_map(items),
         }
 
     section = _find_douban_source(section_key)
@@ -1237,6 +1332,7 @@ async def get_explore_section(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch section: {str(exc)}")
 
+    items = payload.get("items", []) if isinstance(payload.get("items"), list) else []
     return {
         "source": "douban-frodo",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -1249,8 +1345,9 @@ async def get_explore_section(
             "total": payload["total"],
             "start": payload.get("start", start),
             "count": payload.get("count", limit),
-            "items": payload.get("items", []),
+            "items": items,
         },
+        "emby_status_map": await _build_emby_status_map(items),
     }
 
 
@@ -1270,6 +1367,7 @@ async def get_explore_douban_section(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch section: {str(exc)}")
 
+    items = payload.get("items", []) if isinstance(payload.get("items"), list) else []
     return {
         "source": "douban-frodo",
         "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -1282,8 +1380,9 @@ async def get_explore_douban_section(
             "total": payload["total"],
             "start": payload.get("start", start),
             "count": payload.get("count", limit),
-            "items": payload.get("items", []),
+            "items": items,
         },
+        "emby_status_map": await _build_emby_status_map(items),
     }
 
 
