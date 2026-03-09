@@ -48,6 +48,7 @@ export const searchApi = {
     api.get('/search/explore/sections', { params: { source, limit, refresh } }),
   getExploreSection: (source = 'douban', sectionKey, limit = 30, refresh = false, start = 0) =>
     api.get(`/search/explore/section/${sectionKey}`, { params: { source, limit, refresh, start } }),
+  getEmbyStatusMap: (items = []) => api.post('/search/emby/status-map', { items }),
   resolveExploreItem: (payload) => api.post('/search/explore/resolve', payload),
   enqueueExploreSubscribeTask: (payload) => api.post('/search/explore/queue/subscribe', payload),
   enqueueExploreSaveTask: (payload) => api.post('/search/explore/queue/save', payload),

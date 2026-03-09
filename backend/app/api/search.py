@@ -20,6 +20,7 @@ from app.services.douban_explore_service import (
     resolve_douban_explore_item,
 )
 from app.services.explore_action_queue_service import explore_action_queue_service
+from app.services.emby_service import emby_service
 from app.services.hdhive_service import hdhive_service
 from app.services.nullbr_service import nullbr_service
 from app.services.pansou_service import pansou_service
@@ -29,6 +30,7 @@ from app.services.seedhub_task_service import seedhub_task_service
 from app.services.tg_service import tg_service
 from app.services.tmdb_service import tmdb_service
 from app.services.tmdb_explore_service import TMDB_SECTION_SOURCES, fetch_tmdb_section
+from app.services.tv_missing_service import tv_missing_service
 
 router = APIRouter(prefix="/search", tags=["search"])
 logger = logging.getLogger(__name__)
@@ -124,6 +126,15 @@ class ExploreQueueBaseRequest(BaseModel):
 
 class ExploreQueueSubscribeRequest(ExploreQueueBaseRequest):
     intent: str = "subscribe"
+
+
+class EmbyStatusMapItem(BaseModel):
+    media_type: str
+    tmdb_id: int
+
+
+class EmbyStatusMapRequest(BaseModel):
+    items: list[EmbyStatusMapItem]
 
 
 def _extract_search_items(payload: Any) -> list[dict]:
@@ -1119,6 +1130,64 @@ async def get_explore_home(
         "sections": sections,
         "errors": errors,
     }
+
+
+@router.post("/emby/status-map")
+async def get_emby_status_map(payload: EmbyStatusMapRequest):
+    deduped_items: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for raw_item in payload.items:
+        media_type = "tv" if str(raw_item.media_type or "").lower() == "tv" else "movie"
+        tmdb_id = int(raw_item.tmdb_id or 0)
+        if tmdb_id <= 0:
+            continue
+        key = (media_type, tmdb_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_items.append(key)
+
+    async def resolve_item_status(media_type: str, tmdb_id: int) -> tuple[str, dict[str, Any]]:
+        item_key = f"{media_type}:{tmdb_id}"
+        if media_type == "tv":
+            tv_status = await tv_missing_service.get_tv_missing_status(tmdb_id, include_specials=False)
+            status_text = str(tv_status.get("status") or "")
+            missing_count = int((tv_status.get("counts") or {}).get("missing") or 0)
+            exists_in_emby = status_text == "ok" and missing_count == 0
+            return item_key, {
+                "exists_in_emby": exists_in_emby,
+                "status": status_text or "request_failed",
+                "matched_type": "tv_complete" if exists_in_emby else "",
+            }
+
+        movie_status = await emby_service.get_movie_status_by_tmdb(tmdb_id)
+        status_text = str(movie_status.get("status") or "")
+        exists_in_emby = status_text == "ok" and bool(movie_status.get("exists"))
+        return item_key, {
+            "exists_in_emby": exists_in_emby,
+            "status": status_text or "request_failed",
+            "matched_type": "movie" if exists_in_emby else "",
+        }
+
+    results = await asyncio.gather(
+        *(resolve_item_status(media_type, tmdb_id) for media_type, tmdb_id in deduped_items),
+        return_exceptions=True,
+    )
+
+    status_map: dict[str, dict[str, Any]] = {}
+    for item_key, item_payload in zip((f"{media_type}:{tmdb_id}" for media_type, tmdb_id in deduped_items), results):
+        if isinstance(item_payload, Exception):
+            status_map[item_key] = {
+                "exists_in_emby": False,
+                "status": "request_failed",
+                "matched_type": "",
+            }
+            logger.warning("resolve emby status failed for %s: %s", item_key, item_payload)
+            continue
+        resolved_key, resolved_payload = item_payload
+        status_map[resolved_key] = resolved_payload
+
+    return {"items": status_map}
 
 
 @router.get("/explore/section/{section_key}")

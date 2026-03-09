@@ -30,6 +30,9 @@
             @error="handleImageError"
           />
           <div class="rank">#{{ item.rank }}</div>
+          <div v-if="item.isInEmby" class="emby-badge" title="Emby 已入库">
+            <el-icon><Check /></el-icon>
+          </div>
           <div class="explore-card-actions">
             <el-button
               class="explore-action-btn"
@@ -81,7 +84,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { searchApi, subscriptionApi } from '@/api'
-import { Star, FolderAdd } from '@element-plus/icons-vue'
+import { Star, FolderAdd, Check } from '@element-plus/icons-vue'
 
 const SECTION_BATCH_CACHE_TTL_MS = 5 * 60 * 1000
 const sectionBatchCache = new Map()
@@ -126,6 +129,7 @@ let batchLoadPromise = null
 const subscribedIdMap = ref(new Map())
 const subscribedDoubanIds = ref(new Set()) // 存储豆瓣ID订阅集合
 const subscribedImdbIds = ref(new Set()) // 存储IMDB ID订阅集合
+const embyStatusMap = ref(new Map())
 const EXPLORE_QUEUE_POLL_INTERVAL_MS = 1800
 const queueActiveSubscribeKeys = ref(new Set())
 const queueActiveSaveKeys = ref(new Set())
@@ -145,6 +149,12 @@ const buildSubscribedKey = (mediaType, tmdbId) => {
   return `${type}:${id}`
 }
 
+const markEmbyOnItem = (item) => {
+  if (!item || typeof item !== 'object') return
+  const key = buildSubscribedKey(item.media_type, item.tmdb_id)
+  item.isInEmby = Boolean(key) && Boolean(embyStatusMap.value.get(key)?.exists_in_emby)
+}
+
 const applySubscribedFlag = (item) => {
   if (!item || typeof item !== 'object') return
   const key = buildSubscribedKey(item.media_type, item.tmdb_id)
@@ -154,12 +164,27 @@ const applySubscribedFlag = (item) => {
   item.isSubscribed = (Boolean(key) && subscribedIdMap.value.has(key)) ||
                       (doubanId && subscribedDoubanIds.value.has(String(doubanId))) ||
                       (imdbId && subscribedImdbIds.value.has(String(imdbId).toLowerCase()))
+  markEmbyOnItem(item)
 }
 
 const applySubscribedFlags = () => {
   for (const item of allItems.value) {
     applySubscribedFlag(item)
   }
+}
+
+const collectEmbyStatusPayload = (items = []) => {
+  const deduped = new Map()
+  for (const item of items) {
+    const key = buildSubscribedKey(item?.media_type, item?.tmdb_id)
+    if (!key || deduped.has(key)) continue
+    const [mediaType, tmdbId] = key.split(':')
+    deduped.set(key, {
+      media_type: mediaType,
+      tmdb_id: Number(tmdbId)
+    })
+  }
+  return Array.from(deduped.values())
 }
 
 const normalizeExploreQueueMediaType = (rawType) => {
@@ -330,6 +355,26 @@ const refreshSubscribedMap = async () => {
     applySubscribedFlags()
   } catch {
     // ignore subscription sync errors
+  }
+}
+
+const refreshEmbyStatus = async (items = []) => {
+  const payload = collectEmbyStatusPayload(items)
+  if (!payload.length) {
+    applySubscribedFlags()
+    return
+  }
+  try {
+    const { data } = await searchApi.getEmbyStatusMap(payload)
+    const nextItems = data?.items || {}
+    const nextMap = new Map(embyStatusMap.value)
+    for (const [key, value] of Object.entries(nextItems)) {
+      nextMap.set(key, value || {})
+    }
+    embyStatusMap.value = nextMap
+    applySubscribedFlags()
+  } catch (error) {
+    console.error('Failed to refresh Emby status:', error)
   }
 }
 
@@ -635,6 +680,8 @@ const appendUniqueItems = (items) => {
       tmdb_id: normalizedTmdbId,
       media_type: mediaType,
       isSubscribed: false,
+      isInEmby: false,
+      embyChecking: false,
       subscribing: false,
       saving: false,
       justSaved: false
@@ -650,6 +697,7 @@ const appendUniqueItems = (items) => {
   }
   if (!nextItems.length) return 0
   allItems.value = [...allItems.value, ...nextItems]
+  refreshEmbyStatus(nextItems)
   return nextItems.length
 }
 
@@ -864,6 +912,22 @@ onBeforeUnmount(() => {
       position: relative;
       aspect-ratio: 2 / 3;
       background: var(--ms-bg-elevated);
+
+      .emby-badge {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 4;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: rgba(52, 199, 89, 0.95);
+        color: #fff;
+        box-shadow: 0 6px 16px rgba(52, 199, 89, 0.35);
+      }
 
       img {
         width: 100%;
