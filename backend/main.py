@@ -20,6 +20,7 @@ from app.api import (
     workflow,
 )
 from app.scheduler import scheduler_manager
+from app.services.explore_home_warmup_service import explore_home_warmup_service
 from app.services.operation_log_service import operation_log_service
 from app.services.pansou_service import pansou_service
 from app.services.runtime_settings_service import runtime_settings_service
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     await operation_log_service.prune(days=30)
     await scheduler_manager.init()
     await subscription_scheduler_service.ensure_subscription_tasks()
+    await explore_home_warmup_service.warmup(force_refresh=False)
     yield
     await scheduler_manager.stop()
     await pansou_service.close()

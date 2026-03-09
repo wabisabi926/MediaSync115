@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from app.services.emby_service import emby_service
+from app.services.explore_home_warmup_service import explore_home_warmup_service
 from app.core.database import async_session_maker
 from app.services.subscription_service import subscription_service
 
@@ -12,6 +13,7 @@ class JobRegistry:
         self._registry: dict[str, Callable[..., Any]] = {
             "system.refresh_emby": self._refresh_emby,
             "system.cleanup_runtime_cache": self._cleanup_runtime_cache,
+            "system.warmup_explore_home_cache": self._warmup_explore_home_cache,
             "system.noop": self._noop,
             "subscription.check_nullbr": self._check_subscription_nullbr,
             "subscription.check_hdhive": self._check_subscription_hdhive,
@@ -34,15 +36,22 @@ class JobRegistry:
 
     async def _cleanup_runtime_cache(self, **kwargs) -> dict[str, Any]:
         from app.api import search as search_api
+        from app.services import douban_explore_service, tmdb_explore_service
 
         search_api._movie_pan115_cache.clear()
         search_api._tv_pan115_cache.clear()
+        search_api._emby_badge_cache.clear()
         for cache_item in search_api._popular_sections_cache.values():
             cache_item["payload"] = None
             cache_item["expires_at"] = 0.0
         search_api._popular_movies_cache["payload"] = None
         search_api._popular_movies_cache["expires_at"] = 0.0
+        douban_explore_service._douban_sections_cache.clear()
+        tmdb_explore_service._tmdb_sections_cache.clear()
         return {"success": True, "message": "runtime cache cleared"}
+
+    async def _warmup_explore_home_cache(self, **kwargs) -> dict[str, Any]:
+        return await explore_home_warmup_service.warmup(force_refresh=False)
 
     async def _noop(self, **kwargs) -> dict[str, Any]:
         await asyncio.sleep(0)
