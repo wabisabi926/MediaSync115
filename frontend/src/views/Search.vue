@@ -37,136 +37,23 @@
 
       <div class="recommend-sections" v-loading="exploreLoading">
         <template v-if="exploreSections.length > 0">
-          <div
-            v-for="(section, sectionIndex) in exploreSections"
+          <ExploreSectionRow
+            v-for="section in exploreSections"
             :key="section.key"
-            class="recommend-group"
-          >
-            <div class="group-header">
-              <div class="group-title">
-                <h3>{{ section.title }}</h3>
-                <el-tag size="small" type="info">{{ section.tag }}</el-tag>
-                <span class="group-sub">{{ formatExploreCount(section.total) }} 部</span>
-              </div>
-              <div class="group-actions">
-                <el-button
-                  type="primary"
-                  link
-                  size="small"
-                  @click="goToSection(section.key)"
-                >
-                  更多
-                </el-button>
-              </div>
-            </div>
-
-            <div class="row-shell">
-              <div
-                class="edge-mask left"
-                v-if="getSectionScrollState(section.key).hasLeft"
-              />
-              <div
-                class="edge-mask right"
-                v-if="getSectionScrollState(section.key).hasRight"
-              />
-              <el-button
-                class="side-scroll-btn left"
-                circle
-                size="small"
-                @click="scrollSection(section.key, -1)"
-                @mousedown="startPressScroll(section.key, -1, $event)"
-                @mouseup="stopPressScroll"
-                @mouseleave="stopPressScroll"
-                @touchstart.prevent="startPressScroll(section.key, -1, $event)"
-                @touchend="stopPressScroll"
-                @touchcancel="stopPressScroll"
-                :disabled="!getSectionScrollState(section.key).hasLeft"
-              >
-                <el-icon><ArrowLeft /></el-icon>
-              </el-button>
-              <el-button
-                class="side-scroll-btn right"
-                circle
-                size="small"
-                @click="scrollSection(section.key, 1)"
-                @mousedown="startPressScroll(section.key, 1, $event)"
-                @mouseup="stopPressScroll"
-                @mouseleave="stopPressScroll"
-                @touchstart.prevent="startPressScroll(section.key, 1, $event)"
-                @touchend="stopPressScroll"
-                @touchcancel="stopPressScroll"
-                :disabled="!getSectionScrollState(section.key).hasRight"
-              >
-                <el-icon><ArrowRight /></el-icon>
-              </el-button>
-
-              <div
-                :ref="el => setSectionRowRef(section.key, el)"
-                class="recommend-row"
-                :class="{ dragging: dragState.active && dragState.sectionKey === section.key }"
-                @scroll="handleSectionScroll(section.key)"
-                @pointerdown="startDrag(section.key, $event)"
-                @pointermove="onDrag($event)"
-                @pointerup="endDrag"
-                @pointercancel="endDrag"
-                @pointerleave="endDrag"
-                @dragstart.prevent
-              >
-                <el-card
-                  v-for="(item, itemIndex) in section.displayItems"
-                  :key="`${section.key}-${item.id}-${item.rank}`"
-                  class="recommend-card"
-                  :class="{ 'just-saved': item.justSaved }"
-                  shadow="hover"
-                  :body-style="{ padding: '0' }"
-                  @click="handleExploreItemClick(item)"
-                >
-                  <div class="poster-wrapper">
-                    <img
-                      :src="getPosterUrl(item.poster_url || item.poster_path, { compact: !isPriorityExplorePoster(sectionIndex, itemIndex) })"
-                      :alt="item.title"
-                      :loading="isPriorityExplorePoster(sectionIndex, itemIndex) ? 'eager' : 'lazy'"
-                      :fetchpriority="isPriorityExplorePoster(sectionIndex, itemIndex) ? 'high' : 'auto'"
-                      decoding="async"
-                      draggable="false"
-                      @error="handleImageError"
-                    />
-                    <div class="rank-badge">#{{ item.rank }}</div>
-                    <div v-if="item.isInEmby" class="emby-badge" title="Emby 已入库">
-                      <el-icon><Check /></el-icon>
-                    </div>
-                    <div class="explore-card-actions">
-                      <el-button
-                        class="explore-action-btn"
-                        :type="item.isSubscribed ? 'success' : 'primary'"
-                        circle
-                        :title="item.isSubscribed ? '取消订阅' : '订阅'"
-                        :loading="item.subscribing"
-                        @pointerdown.stop
-                        @click.stop="handleExploreSubscribe(item)"
-                      >
-                        <el-icon><Star /></el-icon>
-                      </el-button>
-                      <el-button
-                        class="explore-action-btn"
-                        type="warning"
-                        circle
-                        title="转存"
-                        :loading="item.saving"
-                        @pointerdown.stop
-                        @click.stop="handleExploreSave(item)"
-                      >
-                        <el-icon><FolderAdd /></el-icon>
-                      </el-button>
-                    </div>
-                  </div>
-                <div class="card-info">
-                  <h4 class="title">{{ item.title }}</h4>
-                </div>
-                </el-card>
-              </div>
-            </div>
-          </div>
+            :source="exploreSource"
+            :section="section"
+            :subscribed-id-map="subscribedIdMap"
+            :subscribed-douban-ids="subscribedDoubanIds"
+            :subscribed-imdb-ids="subscribedImdbIds"
+            :queue-active-subscribe-keys="queueActiveSubscribeKeys"
+            :queue-active-save-keys="queueActiveSaveKeys"
+            :emby-status-map="embyStatusMap"
+            @merge-emby-status="mergeEmbyStatusMap"
+            @open-section="goToSection"
+            @item-click="handleExploreItemClick"
+            @subscribe="handleExploreSubscribe"
+            @save="handleExploreSave"
+          />
         </template>
 
         <el-empty v-else-if="!exploreLoading" description="暂无影视推荐" />
@@ -289,10 +176,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { searchApi, subscriptionApi, pan115Api } from '@/api'
+import ExploreSectionRow from '@/components/explore/ExploreSectionRow.vue'
 import {
   Search as SearchIcon,
-  ArrowLeft,
-  ArrowRight,
   Star,
   FolderAdd,
   Check
@@ -1276,34 +1162,14 @@ const normalizeSearchResultItem = (item, index = 0, fallbackService = '') => {
 const fetchExploreSections = async () => {
   exploreLoading.value = true
   try {
-    const { data } = await searchApi.getExploreHomeSections(exploreSource.value)
-    mergeEmbyStatusMap(data?.emby_status_map || {})
+    const { data } = await searchApi.getExploreMeta(exploreSource.value)
     const sections = Array.isArray(data.sections) ? data.sections : []
-    homeSectionMetaMap.clear()
     exploreSections.value = sections.map((section) => {
-      const normalizedItems = normalizeExploreSectionItems(section.items || [], 1)
-      const initialDisplayCount = Math.min(getHomeInitialRenderCount(), normalizedItems.length)
-      const total = Number(section.total) || normalizedItems.length
-      homeSectionMetaMap.set(section.key, {
-        total,
-        nextOffset: normalizedItems.length
-      })
-
       return {
         ...section,
-        items: normalizedItems,
-        displayItems: normalizedItems.slice(0, initialDisplayCount)
+        total: Number(section.total) || 0
       }
     })
-    applySubscribedFlags()
-    syncExploreQueueItemStates()
-
-    await nextTick()
-    calculateCardWidth()
-    refreshAllSectionScrollStates()
-    for (const section of exploreSections.value) {
-      scheduleHomeSectionPrefetch(section.key, true)
-    }
   } catch (error) {
     console.error('Failed to fetch explore sections:', error)
   } finally {
@@ -1640,46 +1506,22 @@ const cleanupSectionResizeObserver = () => {
 }
 
 const resetExploreState = () => {
-  clearHomePrefetchTimers()
-  homeSectionLoadPromises.clear()
-  homeSectionMetaMap.clear()
-  homeSectionBatchInflight.clear()
-  homeSectionBatchCache.clear()
-  sectionRowRefs.value = {}
-  sectionScrollStates.value = {}
   exploreSections.value = []
 }
 
 onMounted(async () => {
   await initializeExploreHome()
   startExploreQueuePolling()
-  setupSectionResizeObserver()
-  window.addEventListener('resize', refreshAllSectionScrollStates)
 })
 
 watch(exploreSource, async (newSource, oldSource) => {
   if (newSource === oldSource) return
   resetExploreState()
   await initializeExploreHome()
-  cleanupSectionResizeObserver()
-  setupSectionResizeObserver()
 })
 
 onBeforeUnmount(() => {
   stopExploreQueuePolling()
-  stopPressScroll()
-  clearHomePrefetchTimers()
-  homeSectionLoadPromises.clear()
-  homeSectionMetaMap.clear()
-  homeSectionBatchInflight.clear()
-  homeSectionBatchCache.clear()
-  if (scrollStateRafId) {
-    cancelAnimationFrame(scrollStateRafId)
-    scrollStateRafId = 0
-  }
-  pendingScrollStateKeys.clear()
-  cleanupSectionResizeObserver()
-  window.removeEventListener('resize', refreshAllSectionScrollStates)
 })
 </script>
 

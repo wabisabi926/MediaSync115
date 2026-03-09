@@ -42,6 +42,8 @@ api.interceptors.response.use(
 
 export const searchApi = {
   search: (query, page = 1) => api.get('/search', { params: { query, page } }),
+  getExploreMeta: (source = 'douban') =>
+    api.get('/search/explore/meta', { params: { source } }),
   getExploreHomeSections: (source = 'douban', refresh = false) =>
     api.get('/search/explore/home', { params: { source, refresh } }),
   getExploreSections: (source = 'douban', limit = 24, refresh = false) =>

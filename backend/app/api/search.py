@@ -1168,6 +1168,26 @@ async def get_explore_sections(
     }
 
 
+@router.get("/explore/meta")
+async def get_explore_meta(
+    source: str = Query("douban", pattern="^(douban|tmdb)$", description="Explore source"),
+):
+    normalized_source = source if source in {"douban", "tmdb"} else "douban"
+    source_rows = TMDB_SECTION_SOURCES if normalized_source == "tmdb" else DOUBAN_SECTION_SOURCES
+    return {
+        "source": "tmdb" if normalized_source == "tmdb" else "douban-frodo",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "sections": [
+            {
+                "key": row["key"],
+                "title": row["title"],
+                "tag": row["tag"],
+            }
+            for row in source_rows
+        ],
+    }
+
+
 @router.get("/explore/home")
 async def get_explore_home(
     source: str = Query("douban", pattern="^(douban|tmdb)$", description="Explore source"),
