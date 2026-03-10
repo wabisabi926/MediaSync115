@@ -86,7 +86,7 @@ import { ElMessage } from 'element-plus'
 import { searchApi, subscriptionApi } from '@/api'
 import { Star, FolderAdd, Check } from '@element-plus/icons-vue'
 
-const SECTION_BATCH_CACHE_TTL_MS = 5 * 60 * 1000
+const SECTION_BATCH_CACHE_TTL_MS = 10 * 60 * 1000
 const sectionBatchCache = new Map()
 const sectionBatchInflight = new Map()
 const resolveExploreSpeedMode = () => {
@@ -119,13 +119,16 @@ const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500'
 const PRIORITY_POSTER_COUNT = 8
 const API_BATCH_SIZE = 30
 const RENDER_BATCH_SIZE = EXPLORE_SPEED_MODE === 'extreme' ? 30 : 24
-const PREFETCH_BUFFER_SIZE = EXPLORE_SPEED_MODE === 'extreme' ? 96 : 48
-const PREFETCH_ROUNDS = EXPLORE_SPEED_MODE === 'extreme' ? 5 : 3
+const PREFETCH_BATCH_WINDOW = EXPLORE_SPEED_MODE === 'extreme' ? 3 : 2
+const PREFETCH_CONCURRENCY = EXPLORE_SPEED_MODE === 'extreme' ? 2 : 1
 const PREFETCH_DELAY_MS = EXPLORE_SPEED_MODE === 'extreme' ? 0 : 24
 const PREFETCH_ROOT_MARGIN = EXPLORE_SPEED_MODE === 'extreme' ? '1800px 0px' : '1000px 0px'
 let loadObserver = null
 let prefetchTimer = null
-let batchLoadPromise = null
+let prefetchCursor = 0
+const prefetchedOffsets = new Set()
+const prefetchOffsetsInFlight = new Set()
+let activeSectionToken = 0
 const subscribedIdMap = ref(new Map())
 const subscribedDoubanIds = ref(new Set()) // 存储豆瓣ID订阅集合
 const subscribedImdbIds = ref(new Set()) // 存储IMDB ID订阅集合
@@ -383,10 +386,11 @@ const clearPrefetchTimer = () => {
   }
 }
 
-const buildBatchCacheKey = (sectionKey, start, count) => `${sectionKey}:${start}:${count}`
+const buildBatchCacheKey = (sectionSource, sectionKey, start, count) =>
+  `${sectionSource}:${sectionKey}:${start}:${count}`
 
-const getCachedBatchPayload = (sectionKey, start, count) => {
-  const cacheKey = buildBatchCacheKey(sectionKey, start, count)
+const getCachedBatchPayload = (sectionSource, sectionKey, start, count) => {
+  const cacheKey = buildBatchCacheKey(sectionSource, sectionKey, start, count)
   const cached = sectionBatchCache.get(cacheKey)
   if (!cached) return null
   if (Date.now() >= cached.expiresAt) {
@@ -400,32 +404,32 @@ const getCachedBatchPayload = (sectionKey, start, count) => {
   return cached.payload
 }
 
-const setCachedBatchPayload = (sectionKey, start, count, payload) => {
-  const cacheKey = buildBatchCacheKey(sectionKey, start, count)
+const setCachedBatchPayload = (sectionSource, sectionKey, start, count, payload) => {
+  const cacheKey = buildBatchCacheKey(sectionSource, sectionKey, start, count)
   sectionBatchCache.set(cacheKey, {
     payload,
     expiresAt: Date.now() + SECTION_BATCH_CACHE_TTL_MS
   })
 }
 
-const requestSectionBatch = async (sectionKey, start, { refresh = false } = {}) => {
+const requestSectionBatch = async (sectionSource, sectionKey, start, { refresh = false } = {}) => {
   const count = API_BATCH_SIZE
-  const cacheKey = buildBatchCacheKey(sectionKey, start, count)
+  const cacheKey = buildBatchCacheKey(sectionSource, sectionKey, start, count)
   if (!refresh) {
-    const cachedPayload = getCachedBatchPayload(sectionKey, start, count)
+    const cachedPayload = getCachedBatchPayload(sectionSource, sectionKey, start, count)
     if (cachedPayload) return cachedPayload
   }
 
   const inflight = sectionBatchInflight.get(cacheKey)
   if (inflight) return inflight
 
-  const task = searchApi.getExploreSection(exploreSource.value, sectionKey, count, refresh, start)
+  const task = searchApi.getExploreSection(sectionSource, sectionKey, count, refresh, start)
     .then(({ data }) => {
       const payload = {
         ...(data.section || {}),
         emby_status_map: data?.emby_status_map || {}
       }
-      setCachedBatchPayload(sectionKey, start, count, payload)
+      setCachedBatchPayload(sectionSource, sectionKey, start, count, payload)
       return payload
     })
     .finally(() => {
@@ -635,6 +639,12 @@ const disconnectLoadObserver = () => {
   }
 }
 
+const resetPrefetchState = () => {
+  prefetchedOffsets.clear()
+  prefetchOffsetsInFlight.clear()
+  prefetchCursor = 0
+}
+
 const resetSectionState = () => {
   allItems.value = []
   displayCount.value = 0
@@ -648,8 +658,35 @@ const resetSectionState = () => {
   sectionMeta.tag = ''
   sectionMeta.source_url = ''
   sectionMeta.fetched_at = ''
+  resetPrefetchState()
   clearPrefetchTimer()
   disconnectLoadObserver()
+}
+
+const updateSectionMetaFromPayload = (payload, requestStart = 0) => {
+  const batchItems = Array.isArray(payload?.items) ? payload.items : []
+  const payloadTotal = Number(payload?.total) || 0
+  const payloadStart = Number(payload?.start ?? requestStart) || 0
+  const payloadCount = Number(payload?.count) || batchItems.length
+
+  sectionMeta.key = payload?.key || sectionMeta.key
+  sectionMeta.title = payload?.title || sectionMeta.title
+  sectionMeta.tag = payload?.tag || sectionMeta.tag
+  sectionMeta.source_url = payload?.source_url || sectionMeta.source_url
+  sectionMeta.fetched_at = payload?.fetched_at || sectionMeta.fetched_at
+  if (payloadTotal > 0) {
+    remoteTotal.value = payloadTotal
+  } else if (batchItems.length >= API_BATCH_SIZE) {
+    remoteTotal.value = Math.max(remoteTotal.value, payloadStart + batchItems.length + 1)
+  } else {
+    remoteTotal.value = Math.max(remoteTotal.value, payloadStart + batchItems.length)
+  }
+
+  return {
+    batchItems,
+    payloadStart,
+    payloadCount
+  }
 }
 
 const appendUniqueItems = (items) => {
@@ -694,56 +731,72 @@ const fetchNextBatch = async ({ refresh = false, silent = false } = {}) => {
   const sectionKey = route.params.key
   if (!sectionKey) return 0
   if (fetchedOnce.value && !hasMoreRemote.value) return 0
-
-  if (!batchLoadPromise) {
-    const requestStart = nextOffset.value
-    batchLoadPromise = (async () => {
-      const payload = await requestSectionBatch(sectionKey, requestStart, { refresh })
-      mergeEmbyStatusMap(payload?.emby_status_map || {})
-      const batchItems = Array.isArray(payload.items) ? payload.items : []
-      const payloadTotal = Number(payload.total) || 0
-      const payloadStart = Number(payload.start ?? requestStart) || 0
-      const payloadCount = Number(payload.count) || batchItems.length
-
-      sectionMeta.key = payload.key || sectionKey
-      sectionMeta.title = payload.title || sectionMeta.title
-      sectionMeta.tag = payload.tag || sectionMeta.tag
-      sectionMeta.source_url = payload.source_url || sectionMeta.source_url
-      sectionMeta.fetched_at = payload.fetched_at || sectionMeta.fetched_at
-      if (payloadTotal > 0) {
-        remoteTotal.value = payloadTotal
-      } else if (batchItems.length >= API_BATCH_SIZE) {
-        remoteTotal.value = Math.max(remoteTotal.value, payloadStart + batchItems.length + 1)
-      } else {
-        remoteTotal.value = Math.max(remoteTotal.value, payloadStart + batchItems.length)
-      }
-      nextOffset.value = Math.max(nextOffset.value, payloadStart + payloadCount)
-
-      fetchedOnce.value = true
-      return appendUniqueItems(batchItems)
-    })().finally(() => {
-      batchLoadPromise = null
-    })
-  }
+  const requestStart = nextOffset.value
+  const sectionSource = exploreSource.value
+  prefetchedOffsets.delete(requestStart)
 
   if (!silent) loadingMore.value = true
   try {
-    return await batchLoadPromise
+    const payload = await requestSectionBatch(sectionSource, sectionKey, requestStart, { refresh })
+    prefetchedOffsets.delete(requestStart)
+    mergeEmbyStatusMap(payload?.emby_status_map || {})
+    const { batchItems, payloadStart, payloadCount } = updateSectionMetaFromPayload(payload, requestStart)
+    nextOffset.value = Math.max(nextOffset.value, payloadStart + payloadCount)
+    prefetchCursor = Math.max(prefetchCursor, nextOffset.value)
+    fetchedOnce.value = true
+    return appendUniqueItems(batchItems)
   } finally {
     if (!silent) loadingMore.value = false
   }
 }
 
-const ensurePrefetchBuffer = async () => {
-  if (loading.value) return
-  if (!hasMoreRemote.value) return
+const queuePrefetchBatch = (sectionSource, sectionKey, start, sectionToken) => {
+  if (!sectionKey || start < 0) return
+  if (prefetchedOffsets.has(start) || prefetchOffsetsInFlight.has(start)) return
 
-  // Aggressively prefetch a few batches to keep buffer filled ahead of the viewport.
-  for (let i = 0; i < PREFETCH_ROUNDS; i += 1) {
-    const hiddenCount = allItems.value.length - displayCount.value
-    if (!hasMoreRemote.value || hiddenCount >= PREFETCH_BUFFER_SIZE) break
-    const appended = await fetchNextBatch({ silent: true })
-    if (appended <= 0) break
+  const cachedPayload = getCachedBatchPayload(sectionSource, sectionKey, start, API_BATCH_SIZE)
+  if (cachedPayload) {
+    prefetchedOffsets.add(start)
+    return
+  }
+
+  prefetchOffsetsInFlight.add(start)
+  requestSectionBatch(sectionSource, sectionKey, start, { refresh: false })
+    .then((payload) => {
+      if (sectionToken !== activeSectionToken) return
+      updateSectionMetaFromPayload(payload, start)
+      prefetchedOffsets.add(start)
+    })
+    .catch(() => {
+      prefetchedOffsets.delete(start)
+    })
+    .finally(() => {
+      prefetchOffsetsInFlight.delete(start)
+      if (sectionToken === activeSectionToken) {
+        schedulePrefetch()
+      }
+    })
+}
+
+const ensurePrefetchBuffer = async () => {
+  if (loading.value) {
+    schedulePrefetch()
+    return
+  }
+  if (!hasMoreRemote.value) return
+  const sectionKey = route.params.key
+  const sectionSource = exploreSource.value
+  if (!sectionKey) return
+
+  prefetchCursor = Math.max(prefetchCursor, nextOffset.value)
+  const sectionToken = activeSectionToken
+
+  while (prefetchedOffsets.size + prefetchOffsetsInFlight.size < PREFETCH_BATCH_WINDOW) {
+    if (prefetchOffsetsInFlight.size >= PREFETCH_CONCURRENCY) break
+    if (remoteTotal.value > 0 && prefetchCursor >= remoteTotal.value) break
+    const start = prefetchCursor
+    prefetchCursor += API_BATCH_SIZE
+    queuePrefetchBatch(sectionSource, sectionKey, start, sectionToken)
   }
 }
 
@@ -792,6 +845,7 @@ const setupLoadObserver = () => {
 const fetchSection = async () => {
   const sectionKey = route.params.key
   if (!sectionKey) return
+  activeSectionToken += 1
   loading.value = true
   resetSectionState()
   try {
@@ -800,6 +854,7 @@ const fetchSection = async () => {
     if (appended > 0) {
       displayCount.value = Math.min(RENDER_BATCH_SIZE, allItems.value.length)
     }
+    prefetchCursor = Math.max(prefetchCursor, nextOffset.value)
     schedulePrefetch()
     await nextTick()
     setupLoadObserver()
@@ -808,6 +863,7 @@ const fetchSection = async () => {
     ElMessage.error(error.response?.data?.detail || '获取榜单失败')
   } finally {
     loading.value = false
+    schedulePrefetch()
   }
 }
 

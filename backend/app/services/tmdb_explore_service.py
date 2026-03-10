@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -246,10 +247,12 @@ async def fetch_tmdb_section(
     base_url = f"{settings.TMDB_BASE_URL}{source['path']}"
 
     async def _request_with_client(active_client: httpx.AsyncClient) -> dict[str, Any]:
-        page_payloads = []
-        for page in range(page_start, page_end + 1):
-            payload = await _fetch_tmdb_page(source=source, page=page, client=active_client)
-            page_payloads.append(payload)
+        page_payloads = await asyncio.gather(
+            *[
+                _fetch_tmdb_page(source=source, page=page, client=active_client)
+                for page in range(page_start, page_end + 1)
+            ]
+        )
 
         all_items = []
         total_results = 0

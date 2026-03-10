@@ -22,7 +22,7 @@ DOUBAN_API_SECRET = "bf7dddc7c9cfe6f7"
 DOUBAN_CACHE_TTL_SECONDS = 60 * 60 * 6
 TMDB_ID_CACHE_TTL_SECONDS = 60 * 60 * 24
 TMDB_ID_NEGATIVE_CACHE_TTL_SECONDS = 60 * 10
-TMDB_BACKFILL_CONCURRENCY = 3
+TMDB_BACKFILL_CONCURRENCY = 6
 TMDB_BACKFILL_MAX_ITEMS_PER_SECTION = 12
 TMDB_SYNC_PRIME_MAX_ITEMS_PER_SECTION = 12
 DOUBAN_SECTION_MAX_COUNT = 50
@@ -1580,6 +1580,7 @@ async def fetch_douban_section(
     client: Optional[httpx.AsyncClient] = None,
     home_prime_limit: Optional[int] = None,
     sync_prime_limit: Optional[int] = None,
+    async_backfill_limit: Optional[int] = None,
 ) -> dict[str, Any]:
     key = source["key"]
     now = time.time()
@@ -1648,9 +1649,14 @@ async def fetch_douban_section(
         elif start == 0 and home_prime_limit is not None:
             await _prime_tmdb_ids_for_home_screen(items, backfill_candidates, home_prime_limit)
 
+        effective_async_backfill_limit = (
+            min(max(int(async_backfill_limit or 0), 0), count)
+            if async_backfill_limit is not None
+            else min(max(limit, 1), TMDB_BACKFILL_MAX_ITEMS_PER_SECTION)
+        )
         _schedule_tmdb_backfill(
             candidates=backfill_candidates,
-            limit=min(max(limit, 1), TMDB_BACKFILL_MAX_ITEMS_PER_SECTION),
+            limit=effective_async_backfill_limit,
         )
         _hydrate_tmdb_ids_from_cache(items)
         payload_total = payload.get("total")

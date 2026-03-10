@@ -39,6 +39,7 @@ from app.services.tv_missing_service import tv_missing_service
 router = APIRouter(prefix="/search", tags=["search"])
 logger = logging.getLogger(__name__)
 EXPLORE_HOME_SECTION_LIMIT = EXPLORE_HOME_WARMUP_LIMIT
+EXPLORE_DOUBAN_SECTION_SYNC_PRIME_LIMIT = 6
 DOUBAN_HOME_SYNC_PRIME_LIMIT = 0
 
 POPULAR_MOVIES_URL = "https://popular-movies-data.stevenlu.com/movies.json"
@@ -1370,12 +1371,14 @@ async def get_explore_section(
         raise HTTPException(status_code=404, detail=f"Unknown section key: {section_key}")
 
     try:
+        sync_prime_limit = min(limit, EXPLORE_DOUBAN_SECTION_SYNC_PRIME_LIMIT)
         payload = await fetch_douban_section(
             section,
             limit,
             refresh,
             start=start,
-            sync_prime_limit=limit,
+            sync_prime_limit=sync_prime_limit,
+            async_backfill_limit=limit,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch section: {str(exc)}")
@@ -1414,12 +1417,14 @@ async def get_explore_douban_section(
         raise HTTPException(status_code=404, detail=f"Unknown section key: {section_key}")
 
     try:
+        sync_prime_limit = min(limit, EXPLORE_DOUBAN_SECTION_SYNC_PRIME_LIMIT)
         payload = await fetch_douban_section(
             source,
             limit,
             refresh,
             start=start,
-            sync_prime_limit=limit,
+            sync_prime_limit=sync_prime_limit,
+            async_backfill_limit=limit,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch section: {str(exc)}")
