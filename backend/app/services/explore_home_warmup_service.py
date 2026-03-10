@@ -140,7 +140,7 @@ class ExploreHomeWarmupService:
                         force_refresh,
                         start=0,
                         client=client,
-                        home_prime_limit=0,
+                        home_prime_limit=EXPLORE_HOME_WARMUP_LIMIT,
                     )
                     for section in source_rows
                 ]
