@@ -1,0 +1,16 @@
+.env
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.db
+data
+.pytest_cache
+tests
+test_*.py
+backend.dev.pid
+backend.dev.log
+backend.dev.err.log
