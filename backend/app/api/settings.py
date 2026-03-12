@@ -1,10 +1,11 @@
 import asyncio
 import base64
 import io
-from typing import Optional
 from urllib.parse import quote, urlparse
+from typing import Any, Optional
 
 import httpx
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -12,12 +13,14 @@ from app.services.hdhive_service import hdhive_service
 from app.services.nullbr_service import nullbr_service
 from app.services.pansou_service import pansou_service
 from app.services.runtime_settings_service import runtime_settings_service
+from app.services.app_metadata_service import app_metadata_service
 from app.services.subscription_scheduler_service import subscription_scheduler_service
 from app.services.emby_sync_index_service import emby_sync_index_service
 from app.services.emby_sync_scheduler_service import emby_sync_scheduler_service
 from app.services.tg_sync_service import tg_sync_service
 from app.services.tg_service import tg_service
 from app.services.tmdb_service import tmdb_service
+from app.services.update_check_service import update_check_service
 from app.services.emby_service import emby_service
 from app.utils.proxy import proxy_manager
 
@@ -31,9 +34,6 @@ except Exception:
 
 
 router = APIRouter(prefix="/settings", tags=["settings"])
-
-PROXY_HEALTH_TG_TARGET = "https://api.telegram.org"
-PROXY_HEALTH_TIMEOUT_SECONDS = 5.0
 
 
 class RuntimeSettingsRequest(BaseModel):
@@ -51,7 +51,6 @@ class RuntimeSettingsRequest(BaseModel):
     tg_api_hash: Optional[str] = None
     tg_phone: Optional[str] = None
     tg_session: Optional[str] = None
-    tg_proxy: Optional[str] = None
     tg_channel_usernames: Optional[list[str]] = None
     tg_search_days: Optional[int] = None
     tg_max_messages_per_channel: Optional[int] = None
@@ -86,6 +85,8 @@ class RuntimeSettingsRequest(BaseModel):
     subscription_hdhive_unlock_max_points_per_item: Optional[int] = None
     subscription_hdhive_unlock_budget_points_per_run: Optional[int] = None
     subscription_hdhive_unlock_threshold_inclusive: Optional[bool] = None
+    update_source_type: Optional[str] = None
+    update_repository: Optional[str] = None
 
 
 class TgVerifyPasswordRequest(BaseModel):
@@ -231,37 +232,117 @@ async def get_runtime_settings():
     return runtime_settings_service.get_all()
 
 
-@router.put("/runtime")
-async def update_runtime_settings(request: RuntimeSettingsRequest):
-    payload = request.model_dump(exclude_unset=True)
-    merged_settings = runtime_settings_service.get_all()
-    merged_settings.update(payload)
-    if "subscription_resource_priority" in payload:
-        await _validate_priority_source_config(merged_settings)
-    unlock_keys = {
-        "subscription_hdhive_auto_unlock_enabled",
-        "subscription_hdhive_unlock_max_points_per_item",
-        "subscription_hdhive_unlock_budget_points_per_run",
-        "subscription_hdhive_unlock_threshold_inclusive",
+def _build_health_service_payload(
+    *,
+    valid: bool,
+    message: str,
+    target: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "status": "ok" if valid else "error",
+        "valid": bool(valid),
+        "message": str(message or "").strip() or ("连接正常" if valid else "连接失败"),
+        "target": target,
     }
-    if any(key in payload for key in unlock_keys) or payload.get("hdhive_cookie") is not None:
-        _validate_hdhive_unlock_settings(merged_settings)
-    if any(key in payload for key in {"emby_url", "emby_api_key", "emby_sync_enabled", "emby_sync_interval_hours"}):
-        _validate_emby_sync_settings(merged_settings)
-    try:
-        updated = runtime_settings_service.update_bulk(payload)
-        await subscription_scheduler_service.ensure_subscription_tasks()
-        await emby_sync_scheduler_service.ensure_sync_task()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _build_proxy_health_payload(
+    *,
+    status: str,
+    valid: bool,
+    message: str,
+    target: str,
+    applied_proxy: str = "",
+    proxy_scheme: str = "",
+    status_code: int | None = None,
+) -> dict[str, Any]:
     return {
-        "success": True,
-        "settings": updated,
+        "status": status,
+        "valid": bool(valid),
+        "message": str(message or "").strip() or ("连接正常" if valid else "连接失败"),
+        "target": str(target or "").strip(),
+        "applied_proxy": str(applied_proxy or "").strip(),
+        "proxy_scheme": str(proxy_scheme or "").strip(),
+        "status_code": status_code,
     }
 
 
-@router.get("/nullbr/check")
-async def check_nullbr_credentials():
+def _extract_proxy_scheme(proxy_url: str) -> str:
+    return str(urlparse(str(proxy_url or "").strip()).scheme or "").strip().lower()
+
+
+async def _probe_target_health(
+    *,
+    target: str,
+    not_configured_message: str,
+) -> dict[str, Any]:
+    normalized_target = str(target or "").strip()
+    if not normalized_target:
+        return _build_proxy_health_payload(
+            status="not_configured",
+            valid=False,
+            message=not_configured_message,
+            target="",
+        )
+
+    parsed_target = urlparse(normalized_target)
+    scheme = str(parsed_target.scheme or "").strip().lower()
+    if scheme not in {"http", "https"} or not parsed_target.netloc:
+        return _build_proxy_health_payload(
+            status="error",
+            valid=False,
+            message="目标地址无效",
+            target=normalized_target,
+        )
+
+    applied_proxy = str(proxy_manager.get_proxy_for_scheme(scheme) or "").strip()
+    if not applied_proxy:
+        return _build_proxy_health_payload(
+            status="error",
+            valid=False,
+            message="未命中代理",
+            target=normalized_target,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, proxy=applied_proxy) as client:
+            response = await client.get(normalized_target)
+        status_code = int(response.status_code)
+        if 200 <= status_code < 400:
+            return _build_proxy_health_payload(
+                status="ok",
+                valid=True,
+                message=f"连接正常 (HTTP {status_code})",
+                target=normalized_target,
+                applied_proxy=applied_proxy,
+                proxy_scheme=_extract_proxy_scheme(applied_proxy),
+                status_code=status_code,
+            )
+        return _build_proxy_health_payload(
+            status="error",
+            valid=False,
+            message=f"连接异常 (HTTP {status_code})",
+            target=normalized_target,
+            applied_proxy=applied_proxy,
+            proxy_scheme=_extract_proxy_scheme(applied_proxy),
+            status_code=status_code,
+        )
+    except Exception as exc:
+        return _build_proxy_health_payload(
+            status="error",
+            valid=False,
+            message=str(exc) or "连接失败",
+            target=normalized_target,
+            applied_proxy=applied_proxy,
+            proxy_scheme=_extract_proxy_scheme(applied_proxy),
+        )
+
+
+async def _perform_nullbr_check() -> dict[str, Any]:
     try:
         info = await asyncio.to_thread(nullbr_service.get_user_info)
         return {
@@ -277,8 +358,7 @@ async def check_nullbr_credentials():
         }
 
 
-@router.get("/hdhive/check")
-async def check_hdhive_credentials():
+async def _perform_hdhive_check() -> dict[str, Any]:
     try:
         info = await hdhive_service.get_user_info()
         return {
@@ -294,8 +374,7 @@ async def check_hdhive_credentials():
         }
 
 
-@router.get("/tg/check")
-async def check_tg_credentials():
+async def _perform_tg_check() -> dict[str, Any]:
     try:
         payload = await tg_service.check_connection()
         authorized = bool(payload.get("authorized"))
@@ -314,26 +393,111 @@ async def check_tg_credentials():
         }
 
 
-@router.get("/tmdb/check")
-async def check_tmdb_credentials():
-    """检查 TMDB API 配置是否有效"""
+async def _perform_tmdb_check() -> dict[str, Any]:
     try:
-        # 尝试搜索一个常见电影来验证 API 密钥
-        result = await tmdb_service.search_multi("Inception", page=1)
-        items = result.get("items", [])
+        result = await tmdb_service.check_connection()
         return {
             "valid": True,
             "message": "TMDB API 配置可用",
-            "search_results_count": len(items),
-            "sample_result": items[0] if items else None,
+            "configuration": result.get("configuration"),
+            "images_configured": bool(result.get("images_configured")),
+            "change_keys_count": int(result.get("change_keys_count") or 0),
         }
     except Exception as exc:
         return {
             "valid": False,
             "message": str(exc),
-            "search_results_count": 0,
-            "sample_result": None,
+            "configuration": None,
+            "images_configured": False,
+            "change_keys_count": 0,
         }
+
+
+def _validate_update_source_settings(merged_settings: dict[str, Any]) -> None:
+    source_type = str(merged_settings.get("update_source_type") or "official").strip().lower()
+    repository = str(merged_settings.get("update_repository") or "").strip()
+    try:
+        update_check_service.normalize_repository(source_type, repository)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/runtime")
+async def update_runtime_settings(request: RuntimeSettingsRequest):
+    payload = request.model_dump(exclude_unset=True)
+    merged_settings = runtime_settings_service.get_all()
+    merged_settings.update(payload)
+    if "subscription_resource_priority" in payload:
+        await _validate_priority_source_config(merged_settings)
+    unlock_keys = {
+        "subscription_hdhive_auto_unlock_enabled",
+        "subscription_hdhive_unlock_max_points_per_item",
+        "subscription_hdhive_unlock_budget_points_per_run",
+        "subscription_hdhive_unlock_threshold_inclusive",
+    }
+    if any(key in payload for key in unlock_keys) or payload.get("hdhive_cookie") is not None:
+        _validate_hdhive_unlock_settings(merged_settings)
+    if any(key in payload for key in {"emby_url", "emby_api_key", "emby_sync_enabled", "emby_sync_interval_hours"}):
+        _validate_emby_sync_settings(merged_settings)
+    if any(key in payload for key in {"update_source_type", "update_repository"}):
+        _validate_update_source_settings(merged_settings)
+    try:
+        updated = runtime_settings_service.update_bulk(payload)
+        await subscription_scheduler_service.ensure_subscription_tasks()
+        await emby_sync_scheduler_service.ensure_sync_task()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "success": True,
+        "settings": updated,
+    }
+
+
+@router.get("/app-info")
+async def get_app_info():
+    metadata = app_metadata_service.get_current_metadata()
+    return {
+        **metadata,
+        "update_source_type": runtime_settings_service.get_update_source_type(),
+        "update_repository": runtime_settings_service.get_update_repository(),
+    }
+
+
+@router.get("/update-check")
+async def check_updates():
+    try:
+        return await update_check_service.check(
+            source_type=runtime_settings_service.get_update_source_type(),
+            repository=runtime_settings_service.get_update_repository(),
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = f"DockerHub 检查失败 (HTTP {exc.response.status_code})"
+        raise HTTPException(status_code=502, detail=detail)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"检查更新失败: {str(exc)}")
+
+
+@router.get("/nullbr/check")
+async def check_nullbr_credentials():
+    return await _perform_nullbr_check()
+
+
+@router.get("/hdhive/check")
+async def check_hdhive_credentials():
+    return await _perform_hdhive_check()
+
+
+@router.get("/tg/check")
+async def check_tg_credentials():
+    return await _perform_tg_check()
+
+
+@router.get("/tmdb/check")
+async def check_tmdb_credentials():
+    """检查 TMDB API 配置是否有效"""
+    return await _perform_tmdb_check()
 
 
 @router.get("/pansou/check")
@@ -406,87 +570,35 @@ async def get_proxy_config():
 
 @router.get("/health/all")
 async def check_all_services_health():
-    """检查代理相关目标地址的连通状态。"""
+    """Check whether proxy settings are applied to fixed probe targets."""
+    nullbr_target = runtime_settings_service.get_nullbr_base_url()
+    tmdb_target = runtime_settings_service.get_tmdb_base_url()
 
-    async def _check_target(service_key: str, target: str, configured: bool) -> tuple[str, dict]:
-        normalized_target = str(target or "").strip()
-        if not configured or not normalized_target:
-            return service_key, {
-                "status": "not_configured",
-                "valid": False,
-                "message": "未配置 Base URL",
-                "target": "",
-            }
-
-        scheme = str(urlparse(normalized_target).scheme or "https").lower()
-        proxy_url = proxy_manager.get_proxy_for_scheme(scheme)
-        client_kwargs: dict[str, object] = {
-            "timeout": PROXY_HEALTH_TIMEOUT_SECONDS,
-            "follow_redirects": True,
-        }
-        if proxy_url:
-            client_kwargs["proxy"] = proxy_url
-
-        client = httpx.AsyncClient(**client_kwargs)
-        try:
-            response = await client.get(normalized_target)
-            return service_key, {
-                "status": "ok",
-                "valid": True,
-                "message": f"连接正常 (HTTP {response.status_code})",
-                "target": normalized_target,
-            }
-        except httpx.TimeoutException:
-            return service_key, {
-                "status": "error",
-                "valid": False,
-                "message": "连接超时",
-                "target": normalized_target,
-            }
-        except httpx.ConnectError as exc:
-            return service_key, {
-                "status": "error",
-                "valid": False,
-                "message": str(exc) or "连接失败",
-                "target": normalized_target,
-            }
-        except httpx.HTTPError as exc:
-            return service_key, {
-                "status": "error",
-                "valid": False,
-                "message": str(exc) or "请求失败",
-                "target": normalized_target,
-            }
-        except Exception as exc:
-            return service_key, {
-                "status": "error",
-                "valid": False,
-                "message": str(exc) or "未知错误",
-                "target": normalized_target,
-            }
-        finally:
-            await client.aclose()
-
-    checks = [
-        _check_target(
-            "nullbr",
-            runtime_settings_service.get_nullbr_base_url(),
-            bool(str(runtime_settings_service.get_nullbr_base_url() or "").strip()),
+    nullbr_result, hdhive_result, tmdb_result, tg_result = await asyncio.gather(
+        _probe_target_health(
+            target=nullbr_target,
+            not_configured_message="未配置 Nullbr Base URL",
         ),
-        _check_target(
-            "hdhive",
-            runtime_settings_service.get_hdhive_base_url(),
-            bool(str(runtime_settings_service.get_hdhive_base_url() or "").strip()),
+        _probe_target_health(
+            target="https://hdhive.com/",
+            not_configured_message="",
         ),
-        _check_target(
-            "tmdb",
-            runtime_settings_service.get_tmdb_base_url(),
-            bool(str(runtime_settings_service.get_tmdb_base_url() or "").strip()),
+        _probe_target_health(
+            target=tmdb_target,
+            not_configured_message="未配置 TMDB Base URL",
         ),
-        _check_target("tg", PROXY_HEALTH_TG_TARGET, True),
-    ]
+        _probe_target_health(
+            target="https://api.telegram.org",
+            not_configured_message="",
+        ),
+    )
 
-    results = dict(await asyncio.gather(*checks))
+    results = {
+        "nullbr": nullbr_result,
+        "hdhive": hdhive_result,
+        "tmdb": tmdb_result,
+        "tg": tg_result,
+    }
     checked_results = [result for result in results.values() if result.get("status") != "not_configured"]
     valid_count = sum(1 for result in checked_results if result.get("valid"))
     total_count = len(checked_results)

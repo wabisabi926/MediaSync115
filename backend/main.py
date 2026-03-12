@@ -24,6 +24,7 @@ from app.api import (
 )
 from app.scheduler import scheduler_manager
 from app.services.auth_service import auth_service
+from app.services.app_metadata_service import app_metadata_service
 from app.services.explore_home_warmup_service import explore_home_warmup_service
 from app.services.operation_log_service import operation_log_service
 from app.services.pansou_service import pansou_service
@@ -58,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version=settings.APP_VERSION,
+    version=app_metadata_service.get_current_metadata()["current_version"],
     lifespan=lifespan
 )
 
@@ -168,10 +169,12 @@ app.include_router(logs_api.router, prefix="/api")
 
 @app.get("/")
 async def root():
+    metadata = app_metadata_service.get_current_metadata()
     return {
         "name": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "status": "running"
+        "version": metadata["current_version"],
+        "status": "running",
+        "build": metadata,
     }
 
 

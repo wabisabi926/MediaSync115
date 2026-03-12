@@ -117,6 +117,8 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_max_points_per_item": 10,
             "subscription_hdhive_unlock_budget_points_per_run": 30,
             "subscription_hdhive_unlock_threshold_inclusive": True,
+            "update_source_type": "official",
+            "update_repository": "wangsy1007/mediasync115",
         }
         self._data = dict(self._defaults)
         self._load()
@@ -539,6 +541,16 @@ class RuntimeSettingsService:
     def get_subscription_hdhive_unlock_threshold_inclusive(self) -> bool:
         return bool(self._data.get("subscription_hdhive_unlock_threshold_inclusive", True))
 
+    def get_update_source_type(self) -> str:
+        value = str(self._data.get("update_source_type") or "official").strip().lower()
+        if value == "custom_dockerhub":
+            return "custom_dockerhub"
+        return "official"
+
+    def get_update_repository(self) -> str:
+        value = str(self._data.get("update_repository") or "").strip()
+        return value or "wangsy1007/mediasync115"
+
     def update_bulk(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("配置数据格式无效")
@@ -727,6 +739,8 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_max_points_per_item": self.get_subscription_hdhive_unlock_max_points_per_item(),
             "subscription_hdhive_unlock_budget_points_per_run": self.get_subscription_hdhive_unlock_budget_points_per_run(),
             "subscription_hdhive_unlock_threshold_inclusive": self.get_subscription_hdhive_unlock_threshold_inclusive(),
+            "update_source_type": self.get_update_source_type(),
+            "update_repository": self.get_update_repository(),
         }
 
 

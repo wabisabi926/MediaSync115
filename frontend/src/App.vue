@@ -80,7 +80,7 @@
             <span class="timezone-value">{{ beijingNow }}</span>
           </div>
           <div class="version-info">
-            <span>v1.0.0</span>
+            <span>{{ appVersionLabel }}</span>
           </div>
           <el-button class="logout-btn" plain @click="handleLogout">退出登录</el-button>
         </div>
@@ -181,7 +181,7 @@
             <span class="timezone-value">{{ beijingNow }}</span>
           </div>
           <div class="version-info">
-            <span>v1.0.0</span>
+            <span>{{ appVersionLabel }}</span>
           </div>
           <el-button class="logout-btn" plain @click="handleLogout">退出登录</el-button>
         </div>
@@ -195,7 +195,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import { authApi } from '@/api'
+import { authApi, settingsApi } from '@/api'
 import { resetAuthSessionCache } from '@/router'
 import { formatBeijingDateTime } from '@/utils/timezone'
 import {
@@ -219,6 +219,7 @@ const systemDark = ref(supportsMatchMedia ? window.matchMedia('(prefers-color-sc
 const beijingNow = ref(formatBeijingDateTime(new Date()))
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
 const mobileMenuOpen = ref(false)
+const appVersionLabel = ref('v1.0.0')
 const isLoginRoute = computed(() => route.path === '/login')
 
 const activeMenu = computed(() => {
@@ -291,6 +292,18 @@ function handleResize() {
   viewportWidth.value = window.innerWidth
 }
 
+async function fetchAppVersion() {
+  try {
+    const { data } = await settingsApi.getAppInfo()
+    const version = String(data?.current_version || '').trim()
+    if (version) {
+      appVersionLabel.value = version.startsWith('v') ? version : `v${version}`
+    }
+  } catch {
+    // ignore version fetch failures
+  }
+}
+
 watch(themeMode, (value) => {
   window.localStorage.setItem(THEME_STORAGE_KEY, value)
 })
@@ -310,6 +323,7 @@ watch(isCompact, (compact) => {
 })
 
 onMounted(() => {
+  fetchAppVersion()
   if (supportsMatchMedia) {
     systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)')
     systemThemeMedia.addEventListener('change', handleSystemThemeChange)

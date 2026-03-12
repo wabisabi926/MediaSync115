@@ -162,7 +162,9 @@ export const pansouApi = {
 
 export const settingsApi = {
   getRuntime: () => api.get('/settings/runtime'),
+  getAppInfo: () => api.get('/settings/app-info'),
   updateRuntime: (payload) => api.put('/settings/runtime', payload),
+  checkUpdates: () => api.get('/settings/update-check'),
   checkNullbr: () => api.get('/settings/nullbr/check'),
   checkHdhive: () => api.get('/settings/hdhive/check'),
   checkTg: () => api.get('/settings/tg/check'),

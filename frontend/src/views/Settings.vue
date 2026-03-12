@@ -992,8 +992,94 @@
 
           <div class="about-info">
             <p><strong>MediaSync115</strong></p>
-            <p>版本: 1.0.0</p>
             <p>影视自动化网盘系统</p>
+          </div>
+
+          <el-divider />
+
+          <div class="about-update-section">
+            <el-descriptions :column="1" border size="small" class="about-version-list">
+              <el-descriptions-item label="当前版本">
+                {{ currentVersionText }}
+              </el-descriptions-item>
+              <el-descriptions-item label="镜像标签">
+                {{ currentImageTagText }}
+              </el-descriptions-item>
+              <el-descriptions-item label="构建提交">
+                {{ currentGitShaShort }}
+              </el-descriptions-item>
+              <el-descriptions-item label="构建时间">
+                {{ currentBuildTimeText }}
+              </el-descriptions-item>
+            </el-descriptions>
+
+            <el-form label-width="120px" class="about-update-form">
+              <el-form-item label="更新源类型">
+                <el-select v-model="updateSourceForm.sourceType" style="width: 100%">
+                  <el-option
+                    v-for="option in updateSourceOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="镜像仓库">
+                <el-input
+                  v-model="updateSourceForm.repository"
+                  :disabled="!isCustomUpdateSource"
+                  placeholder="例如: wangsy1007/mediasync115"
+                />
+                <div class="update-source-tip">
+                  <el-text size="small" type="info">
+                    {{ isCustomUpdateSource ? '请输入 DockerHub 仓库名，格式为 namespace/name。' : `当前按官方仓库 ${officialUpdateRepository} 检查更新。` }}
+                  </el-text>
+                </div>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" :loading="savingUpdateSettings" @click="handleSaveUpdateSettings">
+                  保存更新源
+                </el-button>
+                <el-button :loading="checkingUpdates" @click="handleCheckUpdates">
+                  检查更新
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <el-alert
+              v-if="updateCheckState.checked"
+              :title="updateCheckState.message || '更新检查完成'"
+              :type="updateStatusTagType"
+              :closable="false"
+              show-icon
+            />
+
+            <div v-if="updateCheckState.checked" class="update-result">
+              <div class="update-result-header">
+                <span class="update-result-title">检查结果</span>
+                <el-tag size="small" :type="updateStatusTagType">{{ updateStatusTagText }}</el-tag>
+              </div>
+              <el-descriptions :column="1" border size="small">
+                <el-descriptions-item label="检查仓库">
+                  {{ updateCheckState.repository || effectiveUpdateRepository }}
+                </el-descriptions-item>
+                <el-descriptions-item label="最新版本">
+                  {{ updateCheckState.latestVersion || '-' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="最新标签">
+                  {{ updateCheckState.latestTag || '-' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="发布时间">
+                  {{ latestPublishedAtText }}
+                </el-descriptions-item>
+                <el-descriptions-item label="检查时间">
+                  {{ checkedAtText }}
+                </el-descriptions-item>
+              </el-descriptions>
+              <el-text v-if="!updateCheckState.isOfficialSource" size="small" type="info" class="update-source-tip">
+                当前按自定义镜像仓库检查更新，结果可能晚于官方 DockerHub 同步。
+              </el-text>
+            </div>
           </div>
         </el-card>
       </el-tab-pane>
@@ -1038,10 +1124,11 @@ import { ElMessage } from 'element-plus'
 import { authApi, pan115Api, pansouApi, settingsApi, subscriptionApi } from '@/api'
 import { resetAuthSessionCache } from '@/router'
 import { useRouter } from 'vue-router'
-import { formatBeijingTableCell } from '@/utils/timezone'
+import { formatBeijingDateTime, formatBeijingTableCell } from '@/utils/timezone'
 
 const router = useRouter()
 const activeSettingsTab = ref('pan115')
+const officialUpdateRepository = 'wangsy1007/mediasync115'
 const accountForm = ref({
   username: 'admin',
   currentPassword: '',
@@ -1213,6 +1300,36 @@ const pansouHealthStatus = ref('')
 const checkingSourceStatus = ref(false)
 const subscriptionLogs = ref([])
 const loadingSubscriptionLogs = ref(false)
+const savingUpdateSettings = ref(false)
+const checkingUpdates = ref(false)
+
+const appInfo = ref({
+  currentVersion: '1.0.0',
+  currentImageTag: '',
+  currentGitSha: '',
+  currentBuildTime: '',
+  isDockerBuild: false
+})
+const updateSourceForm = ref({
+  sourceType: 'official',
+  repository: officialUpdateRepository
+})
+const updateCheckState = reactive({
+  checked: false,
+  compareStatus: '',
+  hasUpdate: null,
+  latestVersion: '',
+  latestTag: '',
+  latestPublishedAt: '',
+  checkedAt: '',
+  message: '',
+  repository: officialUpdateRepository,
+  isOfficialSource: true
+})
+const updateSourceOptions = [
+  { label: '官方 DockerHub', value: 'official' },
+  { label: '自定义 DockerHub 仓库', value: 'custom_dockerhub' }
+]
 
 const cookieInfo = ref({
   configured: false,
@@ -1352,6 +1469,33 @@ const embySyncStatusTagType = computed(() => {
   if (embySyncStatus.status === 'success') return 'success'
   if (embySyncStatus.status === 'failed') return 'danger'
   return 'info'
+})
+
+const isCustomUpdateSource = computed(() => updateSourceForm.value.sourceType === 'custom_dockerhub')
+const effectiveUpdateRepository = computed(() => {
+  if (!isCustomUpdateSource.value) return officialUpdateRepository
+  return String(updateSourceForm.value.repository || '').trim()
+})
+const currentVersionText = computed(() => String(appInfo.value.currentVersion || '未知'))
+const currentImageTagText = computed(() => String(appInfo.value.currentImageTag || '-'))
+const currentGitShaShort = computed(() => {
+  const value = String(appInfo.value.currentGitSha || '').trim()
+  return value ? value.slice(0, 7) : '-'
+})
+const currentBuildTimeText = computed(() => formatBeijingDateTime(appInfo.value.currentBuildTime))
+const latestPublishedAtText = computed(() => formatBeijingDateTime(updateCheckState.latestPublishedAt))
+const checkedAtText = computed(() => formatBeijingDateTime(updateCheckState.checkedAt))
+const updateStatusTagType = computed(() => {
+  if (updateCheckState.compareStatus === 'update_available') return 'warning'
+  if (updateCheckState.compareStatus === 'up_to_date') return 'success'
+  if (updateCheckState.compareStatus === 'unknown') return 'info'
+  return 'info'
+})
+const updateStatusTagText = computed(() => {
+  if (updateCheckState.compareStatus === 'update_available') return '发现新版本'
+  if (updateCheckState.compareStatus === 'up_to_date') return '已是最新'
+  if (updateCheckState.compareStatus === 'unknown') return '无法精确比较'
+  return '未检查'
 })
 
 const refreshSourceConnectionStatus = async () => {
@@ -2517,6 +2661,21 @@ const handleSaveAccount = async () => {
   }
 }
 
+const fetchAppInfo = async () => {
+  try {
+    const { data } = await settingsApi.getAppInfo()
+    appInfo.value.currentVersion = data.current_version || 'unknown'
+    appInfo.value.currentImageTag = data.current_image_tag || ''
+    appInfo.value.currentGitSha = data.current_git_sha || ''
+    appInfo.value.currentBuildTime = data.current_build_time || ''
+    appInfo.value.isDockerBuild = !!data.is_docker_build
+    updateSourceForm.value.sourceType = data.update_source_type || 'official'
+    updateSourceForm.value.repository = data.update_repository || officialUpdateRepository
+  } catch (error) {
+    console.error('Failed to fetch app info:', error)
+  }
+}
+
 const fetchRuntimeSettings = async () => {
   try {
     const { data } = await settingsApi.getRuntime()
@@ -2585,8 +2744,73 @@ const fetchRuntimeSettings = async () => {
       if (!deduped.includes(source)) deduped.push(source)
     }
     resourcePriority.value = deduped
+    updateSourceForm.value.sourceType = data.update_source_type || 'official'
+    updateSourceForm.value.repository = data.update_repository || officialUpdateRepository
   } catch (error) {
     console.error('Failed to fetch runtime settings:', error)
+  }
+}
+
+const handleSaveUpdateSettings = async () => {
+  const repository = effectiveUpdateRepository.value
+  if (isCustomUpdateSource.value && !repository) {
+    ElMessage.warning('请输入自定义 DockerHub 仓库名')
+    return
+  }
+
+  savingUpdateSettings.value = true
+  try {
+    await settingsApi.updateRuntime({
+      update_source_type: updateSourceForm.value.sourceType,
+      update_repository: repository
+    })
+    updateSourceForm.value.repository = repository || officialUpdateRepository
+    await fetchAppInfo()
+    ElMessage.success('更新检查源已保存')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '更新检查源保存失败')
+  } finally {
+    savingUpdateSettings.value = false
+  }
+}
+
+const handleCheckUpdates = async () => {
+  checkingUpdates.value = true
+  try {
+    const { data } = await settingsApi.checkUpdates()
+    updateCheckState.checked = true
+    updateCheckState.compareStatus = data.compare_status || ''
+    updateCheckState.hasUpdate = data.has_update
+    updateCheckState.latestVersion = data.latest_version || ''
+    updateCheckState.latestTag = data.latest_tag || ''
+    updateCheckState.latestPublishedAt = data.latest_published_at || ''
+    updateCheckState.checkedAt = data.checked_at || ''
+    updateCheckState.message = data.message || ''
+    updateCheckState.repository = data.update_repository || effectiveUpdateRepository.value
+    updateCheckState.isOfficialSource = data.is_official_source !== false
+
+    appInfo.value.currentVersion = data.current_version || appInfo.value.currentVersion
+    appInfo.value.currentImageTag = data.current_image_tag || appInfo.value.currentImageTag
+    appInfo.value.currentGitSha = data.current_git_sha || appInfo.value.currentGitSha
+    appInfo.value.currentBuildTime = data.current_build_time || appInfo.value.currentBuildTime
+    appInfo.value.isDockerBuild = !!data.is_docker_build
+
+    if (data.compare_status === 'update_available') {
+      ElMessage.warning(data.message || '检测到新版本')
+    } else if (data.compare_status === 'up_to_date') {
+      ElMessage.success(data.message || '当前已是最新版本')
+    } else {
+      ElMessage.info(data.message || '已完成更新检查')
+    }
+  } catch (error) {
+    updateCheckState.checked = true
+    updateCheckState.compareStatus = 'unknown'
+    updateCheckState.hasUpdate = null
+    updateCheckState.message = error.response?.data?.detail || '检查更新失败'
+    updateCheckState.checkedAt = new Date().toISOString()
+    ElMessage.error(updateCheckState.message)
+  } finally {
+    checkingUpdates.value = false
   }
 }
 
@@ -2875,6 +3099,7 @@ const handleSaveOfflineDefaultFolder = async () => {
 onMounted(() => {
   fetchAuthSession()
   fetchRuntimeSettings().then(() => {
+    fetchAppInfo()
     if (String(hdhiveForm.value.cookie || '').trim()) {
       checkHdhive(false)
     }
@@ -3125,6 +3350,35 @@ onBeforeUnmount(() => {
       strong {
         color: var(--ms-text-primary);
         font-size: 16px;
+      }
+    }
+
+    .about-update-section {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+
+      .about-version-list,
+      .about-update-form,
+      .update-result {
+        width: 100%;
+      }
+
+      .update-result-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .update-result-title {
+        color: var(--ms-text-primary);
+        font-weight: 600;
+      }
+
+      .update-source-tip {
+        margin-top: 8px;
+        display: block;
       }
     }
 

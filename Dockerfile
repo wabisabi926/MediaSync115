@@ -29,8 +29,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG APP_BUILD_VERSION=dev
+ARG APP_BUILD_TAG=dev
+ARG APP_BUILD_GIT_SHA=local
+ARG APP_BUILD_TIME=
+
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+ENV APP_BUILD_VERSION=${APP_BUILD_VERSION}
+ENV APP_BUILD_TAG=${APP_BUILD_TAG}
+ENV APP_BUILD_GIT_SHA=${APP_BUILD_GIT_SHA}
+ENV APP_BUILD_TIME=${APP_BUILD_TIME}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates nginx \
@@ -44,6 +53,10 @@ COPY docker/all-in-one/start.sh /start.sh
 
 RUN chmod +x /start.sh \
     && mkdir -p /app/data /run/nginx /var/cache/nginx /var/log/nginx
+
+LABEL org.opencontainers.image.version="${APP_BUILD_VERSION}" \
+      org.opencontainers.image.revision="${APP_BUILD_GIT_SHA}" \
+      org.opencontainers.image.created="${APP_BUILD_TIME}"
 
 EXPOSE 80
 
