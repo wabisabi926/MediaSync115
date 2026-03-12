@@ -511,8 +511,8 @@ onBeforeUnmount(() => {
   }
 
   .recommend-card {
-    width: 188px;
-    min-width: 188px;
+    width: var(--recommend-card-width, 188px);
+    min-width: var(--recommend-card-width, 188px);
     border-radius: 14px;
     cursor: pointer;
     border: 1px solid var(--ms-border-color);
@@ -621,6 +621,23 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .recommend-group {
+    .recommend-row {
+      gap: 10px;
+    }
+
+    .recommend-card {
+      .card-info {
+        padding: 9px 9px 11px;
+
+        .title {
+          font-size: 11px;
+          -webkit-line-clamp: 1;
+        }
+      }
+    }
+  }
+
   .recommend-group .recommend-card .poster-wrapper .explore-card-actions {
     opacity: 1;
     transform: translate(-50%, 0);

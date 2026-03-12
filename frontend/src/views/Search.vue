@@ -573,6 +573,16 @@ const calculateCardWidth = () => {
   const width = exploreContainerRef.value?.clientWidth || 0
   if (!width) return
 
+  const currentViewportWidth = typeof window !== 'undefined' ? window.innerWidth : width
+  if (currentViewportWidth <= 768) {
+    const mobileGap = 10
+    const availableWidth = Math.max(width - 30, 0)
+    const mobileWidth = Math.floor((availableWidth - mobileGap * 1.5) / 2.5)
+    cardWidth.value = Math.max(96, Math.min(132, mobileWidth))
+    cardsPerViewRef.value = 2.5
+    return
+  }
+
   const estimated = Math.floor((width + CARD_GAP) / (HOME_CARD_MIN_WIDTH + CARD_GAP))
   const cardsPerView = Math.max(HOME_CARD_MIN_PER_VIEW, Math.min(HOME_CARD_MAX_PER_VIEW, estimated))
   cardsPerViewRef.value = cardsPerView
@@ -1184,6 +1194,10 @@ const initializeExploreHome = async () => {
     fetchExploreQueueActiveTasks()
   ]
   await Promise.allSettled(tasks)
+  await nextTick()
+  cleanupSectionResizeObserver()
+  setupSectionResizeObserver()
+  refreshAllSectionScrollStates()
 }
 
 const clearHomePrefetchTimers = () => {
@@ -1510,6 +1524,7 @@ watch(exploreSource, async (newSource, oldSource) => {
 })
 
 onBeforeUnmount(() => {
+  cleanupSectionResizeObserver()
   stopExploreQueuePolling()
 })
 </script>
