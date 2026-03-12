@@ -419,8 +419,8 @@ onBeforeUnmount(() => {
     padding-bottom: 8px;
 
     .skeleton-card {
-      width: 188px;
-      min-width: 188px;
+      width: var(--recommend-card-width, 188px);
+      min-width: var(--recommend-card-width, 188px);
     }
 
     .skeleton-poster {
@@ -622,6 +622,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .recommend-group {
+    .skeleton-row {
+      gap: 10px;
+    }
+
     .recommend-row {
       gap: 10px;
     }
