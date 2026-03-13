@@ -1815,7 +1815,6 @@ const fetchPansouConfig = async () => {
   try {
     const { data } = await pansouApi.getConfig()
     pansouForm.value.baseUrl = data.base_url || ''
-    pansouHealthStatus.value = data.health?.status || ''
   } catch (error) {
     console.error('Failed to fetch pansou config:', error)
   }
@@ -1931,8 +1930,6 @@ const handleSavePansouConfig = async () => {
   try {
     const { data } = await pansouApi.updateConfig(pansouForm.value.baseUrl)
     pansouForm.value.baseUrl = data.base_url || pansouForm.value.baseUrl
-    pansouHealthStatus.value = data.health?.status || ''
-    await refreshSourceConnectionStatus()
     ElMessage.success('Pansou 配置已保存')
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || 'Pansou 配置保存失败')

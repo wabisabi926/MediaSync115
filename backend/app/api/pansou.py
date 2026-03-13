@@ -32,31 +32,27 @@ async def health_check():
 
 @router.get("/config")
 async def get_pansou_config():
-    """获取 Pansou 配置"""
-    current = runtime_settings_service.get_all()
-    base_url = current["pansou_base_url"]
-    pansou_service.set_base_url(base_url)
-    health = await pansou_service.health_check()
+    """获取 Pansou 配置（不做健康检查，快速返回）"""
+    base_url = runtime_settings_service.get_pansou_base_url()
     return {
         "base_url": base_url,
-        "health": health,
+        "health": None,
     }
 
 
 @router.put("/config")
 async def update_pansou_config(request: PansouConfigRequest):
-    """更新 Pansou 配置"""
+    """更新 Pansou 配置（仅保存，不阻塞做健康检查）"""
     try:
         base_url = runtime_settings_service.update_pansou_base_url(request.base_url)
         pansou_service.set_base_url(base_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    health = await pansou_service.health_check()
     return {
         "success": True,
         "base_url": base_url,
-        "health": health,
+        "health": None,
     }
 
 

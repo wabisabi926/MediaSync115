@@ -59,13 +59,13 @@ class PansouService:
 
     async def health_check(self) -> dict:
         """
-        检查 pansou 服务健康状态
+        检查 pansou 服务健康状态（使用较短超时）
 
         Returns:
             dict: 健康状态
         """
         try:
-            response = await self.client.get("/api/health")
+            response = await self.client.get("/api/health", timeout=5.0)
             return {
                 "status": "healthy" if response.status_code == 200 else "unhealthy",
                 "code": response.status_code,
