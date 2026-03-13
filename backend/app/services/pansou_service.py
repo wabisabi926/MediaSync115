@@ -36,9 +36,6 @@ class PansouService:
 
     def set_base_url(self, base_url: str) -> str:
         normalized_base_url = self._normalize_base_url(base_url)
-        if normalized_base_url == self.base_url:
-            return self.base_url
-
         old_client = self.client
         self.base_url = normalized_base_url
         self.client = self._build_client()
@@ -46,7 +43,6 @@ class PansouService:
             loop = asyncio.get_running_loop()
             loop.create_task(old_client.aclose())
         except RuntimeError:
-            # no running event loop
             pass
         return self.base_url
 
