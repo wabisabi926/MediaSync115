@@ -9,16 +9,10 @@
         @clear="handleBackToExplore"
         @keyup.enter="handleSearch"
       >
-        <template #prepend>
-          <el-button v-if="showBackToExploreButton" @click="handleBackToExplore">返回探索</el-button>
-        </template>
         <template #prefix>
           <el-icon><SearchIcon /></el-icon>
         </template>
-          <template #append>
-            <el-button type="primary" @click="handleSearch" :loading="loading">搜索</el-button>
-          </template>
-        </el-input>
+      </el-input>
       </div>
 
     <section
@@ -1552,37 +1546,6 @@ onBeforeUnmount(() => {
         box-shadow: none;
       }
 
-      .el-input-group__prepend,
-      .el-input-group__append {
-        background: var(--search-pill-bg);
-        border: none;
-        box-shadow: none;
-      }
-
-      .el-input-group__prepend {
-        border-radius: 10px 0 0 10px;
-        padding-left: 10px;
-      }
-
-      .el-input-group__append {
-        border-radius: 0 10px 10px 0;
-        padding-right: 6px;
-      }
-
-      .el-input-group__prepend .el-button,
-      .el-input-group__append .el-button {
-        border: 0;
-      }
-
-      .el-input-group__prepend .el-button {
-        color: var(--ms-text-secondary);
-      }
-
-      .el-input-group__append .el-button {
-        border-radius: 8px;
-        padding-inline: 16px;
-      }
-
       &.is-focus .el-input__wrapper {
         box-shadow: 0 0 0 1px rgba(45, 153, 255, 0.35), 0 0 20px rgba(45, 153, 255, 0.14);
       }
@@ -2270,14 +2233,6 @@ onBeforeUnmount(() => {
 
   .explore-page .search-header :deep(.el-input .el-input__wrapper) {
     min-height: 40px;
-  }
-
-  .explore-page .search-header :deep(.el-input-group__prepend) {
-    padding-left: 6px;
-  }
-
-  .explore-page .search-header :deep(.el-input-group__append .el-button) {
-    padding-inline: 12px;
   }
 
   .explore-page .explore-section .recommend-group .recommend-card .poster-wrapper .explore-card-actions {
