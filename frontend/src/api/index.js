@@ -219,6 +219,8 @@ export const subscriptionApi = {
   runChannelCheck: (channel) => api.post('/subscriptions/system/run', { channel }, { timeout: 300000 }),
   runChannelCheckBackground: (channel, forceAutoDownload = false) =>
     api.post('/subscriptions/system/run/background', { channel, force_auto_download: forceAutoDownload }),
+  runAllChannelsCheckBackground: (forceAutoDownload = false) =>
+    api.post('/subscriptions/system/run/background', { channel: 'all', force_auto_download: forceAutoDownload }),
   getRunTask: (taskId) => api.get(`/subscriptions/system/run/tasks/${taskId}`),
   listLogs: async (params) => {
     try {

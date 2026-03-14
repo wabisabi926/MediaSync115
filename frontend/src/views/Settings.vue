@@ -935,14 +935,15 @@
 
             <el-form-item>
               <el-button type="primary" :loading="savingScheduler" @click="handleSaveScheduler">保存</el-button>
-              <el-button :loading="runningNullbr" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('nullbr')">立即执行 Nullbr</el-button>
-              <el-button :loading="runningHdhive" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('hdhive')">立即执行 HDHive</el-button>
-              <el-button :loading="runningPansou" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('pansou')">立即执行 Pansou</el-button>
-              <el-button :loading="runningTg" :disabled="runningSubscriptionChannel !== ''" @click="handleRunSubscriptionChannel('tg')">立即执行 Telegram</el-button>
+              <el-button type="success" :loading="runningAllChannels" :disabled="runningSubscriptionChannel !== ''" @click="handleRunAllChannels">立即执行全部渠道</el-button>
+              <el-button :loading="runningNullbr" :disabled="runningSubscriptionChannel !== '' || runningAllChannels" @click="handleRunSubscriptionChannel('nullbr')">立即执行 Nullbr</el-button>
+              <el-button :loading="runningHdhive" :disabled="runningSubscriptionChannel !== '' || runningAllChannels" @click="handleRunSubscriptionChannel('hdhive')">立即执行 HDHive</el-button>
+              <el-button :loading="runningPansou" :disabled="runningSubscriptionChannel !== '' || runningAllChannels" @click="handleRunSubscriptionChannel('pansou')">立即执行 Pansou</el-button>
+              <el-button :loading="runningTg" :disabled="runningSubscriptionChannel !== '' || runningAllChannels" @click="handleRunSubscriptionChannel('tg')">立即执行 Telegram</el-button>
             </el-form-item>
-            <el-form-item v-if="runningSubscriptionChannel">
+            <el-form-item v-if="runningSubscriptionChannel || runningAllChannels">
               <el-alert
-                :title="runningTaskMessage || `正在执行 ${runningSubscriptionChannel} 任务`"
+                :title="runningTaskMessage || (runningAllChannels ? '正在执行全部渠道任务' : `正在执行 ${runningSubscriptionChannel} 任务`)"
                 type="info"
                 :closable="false"
                 show-icon
@@ -1293,6 +1294,7 @@ const runningNullbr = ref(false)
 const runningHdhive = ref(false)
 const runningPansou = ref(false)
 const runningTg = ref(false)
+const runningAllChannels = ref(false)
 const runningSubscriptionChannel = ref('')
 const runningTaskId = ref('')
 const runningTaskMessage = ref('')
@@ -2971,6 +2973,55 @@ const handleRunSubscriptionChannel = async (channel) => {
   } finally {
     loadingRef.value = false
     runningSubscriptionChannel.value = ''
+    runningTaskId.value = ''
+    runningTaskMessage.value = ''
+  }
+}
+
+const handleRunAllChannels = async () => {
+  if (runningAllChannels.value || runningSubscriptionChannel.value) return
+  runningAllChannels.value = true
+  runningTaskMessage.value = '任务已提交，等待执行...'
+  try {
+    const { data } = await subscriptionApi.runAllChannelsCheckBackground(true)
+    if (data?.already_running) {
+      const runningChannels = data?.running_channels || []
+      if (runningChannels.length > 0) {
+        ElMessage.info(`以下渠道正在运行中: ${runningChannels.join(', ')}`)
+        runningAllChannels.value = false
+        runningTaskMessage.value = ''
+        return
+      }
+    }
+    runningTaskId.value = data?.task_id || ''
+    if (!runningTaskId.value) {
+      ElMessage.error('未能获取任务ID')
+      runningAllChannels.value = false
+      runningTaskMessage.value = ''
+      return
+    }
+    const taskResult = await pollSubscriptionTask(runningTaskId.value)
+    if (taskResult.ok) {
+      const result = taskResult.task?.result || {}
+      const successCount = result.success_count || 0
+      const failedCount = result.failed_count || 0
+      const message = taskResult.task?.message || `全部渠道执行完成: ${successCount} 成功, ${failedCount} 失败`
+      if (failedCount === 0) {
+        ElMessage.success(message)
+      } else if (successCount > 0) {
+        ElMessage.warning(message)
+      } else {
+        ElMessage.error(message)
+      }
+    } else {
+      const errorMessage = taskResult.task?.error || taskResult.task?.message || '执行全部渠道失败'
+      ElMessage.error(errorMessage)
+    }
+    await fetchSubscriptionLogs()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '执行全部渠道失败')
+  } finally {
+    runningAllChannels.value = false
     runningTaskId.value = ''
     runningTaskMessage.value = ''
   }
