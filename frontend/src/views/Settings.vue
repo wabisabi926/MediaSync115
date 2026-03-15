@@ -275,6 +275,9 @@
                 <el-tag v-if="hdhiveStatus.user.is_vip" type="warning" size="small">会员</el-tag>
                 <el-tag v-else type="info" size="small">非会员</el-tag>
               </el-descriptions-item>
+              <el-descriptions-item label="当前积分">
+                {{ Number.isFinite(Number(hdhiveStatus.user.points)) ? Number(hdhiveStatus.user.points) : '-' }}
+              </el-descriptions-item>
             </el-descriptions>
           </div>
         </el-card>

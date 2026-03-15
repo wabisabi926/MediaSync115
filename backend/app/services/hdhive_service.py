@@ -66,6 +66,87 @@ class HDHiveService:
             await client.aclose()
 
     @staticmethod
+    def _extract_first_int(raw_value: Any) -> int | None:
+        if raw_value is None or raw_value == "":
+            return None
+        if isinstance(raw_value, bool):
+            return int(raw_value)
+        if isinstance(raw_value, (int, float)):
+            return int(raw_value)
+
+        text = str(raw_value).strip()
+        if not text:
+            return None
+
+        match = re.search(r"-?\d+", text.replace(",", ""))
+        if not match:
+            return None
+        try:
+            return int(match.group(0))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _extract_user_points(cls, user_obj: dict[str, Any]) -> int | None:
+        if not isinstance(user_obj, dict):
+            return None
+
+        candidate_keys = (
+            "points",
+            "point",
+            "point_balance",
+            "point_total",
+            "credit",
+            "credits",
+            "credit_balance",
+            "score",
+            "scores",
+            "integral",
+            "balance",
+            "wallet_points",
+            "unlock_points_balance",
+        )
+
+        for key in candidate_keys:
+            value = cls._extract_first_int(user_obj.get(key))
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _extract_object_payload(raw: str, token: str) -> str:
+        index = raw.find(token)
+        if index < 0:
+            return ""
+        start = raw.find("{", index)
+        if start < 0:
+            return ""
+
+        depth = 0
+        in_string = False
+        escaped = False
+        for pos in range(start, len(raw)):
+            char = raw[pos]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return raw[start:pos + 1]
+        return ""
+
+    @staticmethod
     def _extract_bracket_payload(raw: str, token: str) -> str:
         index = raw.find(token)
         if index < 0:
@@ -132,38 +213,44 @@ class HDHiveService:
                         return rows
         return []
 
-    @staticmethod
-    def _extract_current_user(raw: str) -> dict[str, Any]:
-        segment = ""
-        marker = '\\"currentUser\\":{'
-        index = raw.find(marker)
-        if index >= 0:
-            segment = raw[index:index + 5000]
-        if not segment:
+    @classmethod
+    def _extract_current_user(cls, raw: str) -> dict[str, Any]:
+        payload = ""
+        for marker in ('\\"currentUser\\":{', '"currentUser":{'):
+            payload = cls._extract_object_payload(raw, marker)
+            if payload:
+                break
+        if not payload:
             return {}
 
-        username = ""
-        nickname = ""
-        is_vip = False
+        for parsed in cls._decode_json_candidates(payload):
+            if not isinstance(parsed, dict):
+                continue
 
-        username_match = re.search(r'\\"username\\":\\"([^\\"]*)\\"', segment)
-        if username_match:
-            username = username_match.group(1).strip()
+            username = str(parsed.get("username") or parsed.get("nickname") or "").strip()
+            nickname = str(parsed.get("nickname") or "").strip()
+            raw_vip = parsed.get("is_vip")
+            is_vip = False
+            if isinstance(raw_vip, bool):
+                is_vip = raw_vip
+            elif isinstance(raw_vip, (int, float)):
+                is_vip = int(raw_vip) > 0
+            elif isinstance(raw_vip, str):
+                raw_vip_text = raw_vip.strip().lower()
+                is_vip = raw_vip_text == "true" or raw_vip_text.isdigit() and int(raw_vip_text) > 0
 
-        nickname_match = re.search(r'\\"nickname\\":\\"([^\\"]*)\\"', segment)
-        if nickname_match:
-            nickname = nickname_match.group(1).strip()
+            user_info = {
+                "username": username,
+                "nickname": nickname,
+                "is_vip": bool(is_vip),
+            }
 
-        vip_match = re.search(r'\\"is_vip\\":(true|false|[0-9]+)', segment)
-        if vip_match:
-            raw_vip = vip_match.group(1).strip().lower()
-            is_vip = raw_vip == "true" or (raw_vip.isdigit() and int(raw_vip) > 0)
+            points = cls._extract_user_points(parsed)
+            if points is not None:
+                user_info["points"] = points
+            return user_info
 
-        return {
-            "username": username or nickname or "",
-            "nickname": nickname or "",
-            "is_vip": bool(is_vip),
-        }
+        return {}
 
     @staticmethod
     def _extract_media_slug_from_home(raw: str, tmdb_id: int, media_type: str) -> str:
