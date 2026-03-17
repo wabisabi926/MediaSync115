@@ -609,14 +609,21 @@ const handlePosterError = (event) => {
   event.target.src = new URL('/no-poster.png', import.meta.url).href
 }
 
+const buildPan115MergeKey = (item = {}) => {
+  const sourceService = String(item?.source_service || 'nullbr').trim() || 'nullbr'
+  const slug = String(item?.slug || '').trim()
+  if (slug) return `${sourceService}|slug:${slug}`
+  const shareLink = String(item?.share_link || item?.share_url || item?.pan115_share_link || '').trim()
+  const title = String(item?.title || item?.name || '').trim()
+  return `${sourceService}|${shareLink}|${title}`
+}
+
 const mergePan115Resources = (primaryList = [], secondaryList = []) => {
   const merged = []
   const seen = new Set()
   for (const item of [...primaryList, ...secondaryList]) {
     if (!item || typeof item !== 'object') continue
-    const shareLink = String(item.share_link || item.share_url || '').trim()
-    const title = String(item.title || item.name || '').trim()
-    const key = `${shareLink}|${title}`
+    const key = buildPan115MergeKey(item)
     if (seen.has(key)) continue
     seen.add(key)
     merged.push(item)
