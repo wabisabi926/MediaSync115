@@ -20,14 +20,28 @@ class TmdbService:
             params["page"] = page
         return params
 
+    @staticmethod
+    def _check_api_key_error(response: httpx.Response) -> None:
+        if response.status_code == 401:
+            raise ValueError(
+                "TMDB API Key 无效，请前往设置页重新配置正确的 API Key"
+            )
+        if response.status_code == 403:
+            raise ValueError(
+                "TMDB API Key 权限不足或已被禁用，请检查后重新配置"
+            )
+
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{settings.TMDB_BASE_URL}{path}"
         client = proxy_manager.create_httpx_client(timeout=15.0, http2=True)
         try:
             response = await client.get(url, params=params)
+            self._check_api_key_error(response)
             response.raise_for_status()
             payload = response.json()
             return payload if isinstance(payload, dict) else {}
+        except ValueError:
+            raise
         except Exception as exc:
             # Some environments/proxies present a mismatched certificate for TMDB.
             # Fallback once with verify=False to keep subscription/detail flows available.
@@ -40,6 +54,7 @@ class TmdbService:
         insecure_client = proxy_manager.create_httpx_client(timeout=15.0, http2=True, verify=False)
         try:
             response = await insecure_client.get(url, params=params)
+            self._check_api_key_error(response)
             response.raise_for_status()
             payload = response.json()
             return payload if isinstance(payload, dict) else {}

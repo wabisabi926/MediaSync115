@@ -1250,7 +1250,7 @@ const handleSearch = async () => {
     totalPages.value = backendPages || (results.value.length > 0 ? 1 : 0)
   } catch (error) {
     console.error('Search failed:', error)
-    ElMessage.error('搜索失败，请稍后重试')
+    ElMessage.error(error.response?.data?.detail || '搜索失败，请稍后重试')
   } finally {
     loading.value = false
   }

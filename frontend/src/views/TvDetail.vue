@@ -1048,7 +1048,7 @@ const fetchTv = async () => {
     await fetchExternalIds(tmdbId)
     await refreshEmbyStatus()
   } catch (error) {
-    ElMessage.error('获取电视剧信息失败')
+    ElMessage.error(error.response?.data?.detail || '获取电视剧信息失败')
   } finally {
     loading.value = false
   }

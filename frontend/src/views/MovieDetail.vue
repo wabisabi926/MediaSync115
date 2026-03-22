@@ -1007,7 +1007,7 @@ const fetchMovie = async () => {
     await fetchExternalIds(tmdbId)
     await refreshEmbyStatus()
   } catch (error) {
-    ElMessage.error('获取电影信息失败')
+    ElMessage.error(error.response?.data?.detail || '获取电影信息失败')
   } finally {
     loading.value = false
   }
