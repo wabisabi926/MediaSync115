@@ -4,13 +4,13 @@
       <h2>日志中心</h2>
       <div class="filters">
         <el-select v-model="filters.sourceType" clearable placeholder="类型" class="filter-item">
-          <el-option v-for="item in sourceTypeOptions" :key="item" :label="item" :value="item" />
+          <el-option v-for="item in sourceTypeOptions" :key="item" :label="translateLabel(item, sourceTypeLabels)" :value="item" />
         </el-select>
         <el-select v-model="filters.module" clearable placeholder="模块" class="filter-item">
-          <el-option v-for="item in moduleOptions" :key="item" :label="item" :value="item" />
+          <el-option v-for="item in moduleOptions" :key="item" :label="translateLabel(item, moduleLabels)" :value="item" />
         </el-select>
         <el-select v-model="filters.status" clearable placeholder="状态" class="filter-item">
-          <el-option v-for="item in statusOptions" :key="item" :label="item" :value="item" />
+          <el-option v-for="item in statusOptions" :key="item" :label="translateLabel(item, statusLabels)" :value="item" />
         </el-select>
         <el-input v-model.trim="filters.path" clearable placeholder="路径包含..." class="filter-item filter-item-wide" />
         <el-input v-model.trim="filters.traceId" clearable placeholder="Trace ID" class="filter-item filter-item-wide" />
@@ -42,12 +42,18 @@
       <div class="table-wrap">
         <el-table :data="logs" v-loading="loading" size="small">
           <el-table-column prop="created_at" label="时间" min-width="170" :formatter="formatBeijingTableCell" />
-          <el-table-column prop="source_type" label="类型" width="130" />
-          <el-table-column prop="module" label="模块" width="120" />
-          <el-table-column prop="action" label="动作" min-width="260" show-overflow-tooltip />
+          <el-table-column label="类型" width="130">
+            <template #default="{ row }">{{ translateLabel(row.source_type, sourceTypeLabels) }}</template>
+          </el-table-column>
+          <el-table-column label="模块" width="120">
+            <template #default="{ row }">{{ translateLabel(row.module, moduleLabels) }}</template>
+          </el-table-column>
+          <el-table-column label="动作" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ translateAction(row.action) }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" size="small">{{ row.status || 'info' }}</el-tag>
+              <el-tag :type="statusTagType(row.status)" size="small">{{ translateLabel(row.status, statusLabels) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="HTTP" min-width="180">
@@ -95,6 +101,86 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { logsApi } from '@/api'
 import { formatBeijingTableCell } from '@/utils/timezone'
+
+const sourceTypeLabels = {
+  api: 'API 请求',
+  scheduler: '定时任务',
+  background_task: '后台任务',
+  explore_queue: '探索队列',
+}
+
+const moduleLabels = {
+  scheduler: '调度器',
+  subscriptions: '订阅',
+  explore_queue: '探索队列',
+  pan115: '115网盘',
+  search: '搜索',
+  settings: '设置',
+  emby: 'Emby',
+  health: '健康检查',
+  logs: '日志',
+  downloads: '下载',
+  unknown: '未知',
+}
+
+const statusLabels = {
+  success: '成功',
+  failed: '失败',
+  warning: '警告',
+  info: '信息',
+  partial: '部分成功',
+}
+
+const actionLabels = {
+  'scheduler.job.start': '调度任务开始',
+  'scheduler.job.finish': '调度任务完成',
+  'scheduler.job.update': '调度任务更新',
+  'scheduler.job.result_persist_failed': '调度结果持久化失败',
+  'subscription.run.background.start': '订阅后台任务开始',
+  'subscription.run.background.running': '订阅后台任务执行中',
+  'subscription.run.background.finish': '订阅后台任务完成',
+  'explore.queue.subscribe.start': '探索订阅开始',
+  'explore.queue.subscribe.finish': '探索订阅完成',
+  'explore.queue.save.start': '探索转存开始',
+  'explore.queue.save.finish': '探索转存完成',
+}
+
+const translateLabel = (value, map) => {
+  if (!value) return '-'
+  return map[value] || value
+}
+
+const apiActionPatterns = [
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/search/, '搜索'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/pan115/, '115网盘'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/subscriptions/, '订阅'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/settings/, '设置'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/emby/, 'Emby'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/logs/, '日志'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/health/, '健康检查'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/downloads/, '下载'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/scheduler/, '调度器'],
+  [/^(GET|POST|PUT|DELETE|PATCH)\s+\/api\/workflows/, '工作流'],
+]
+
+const httpMethodLabels = { GET: '查询', POST: '提交', PUT: '更新', DELETE: '删除', PATCH: '修改' }
+
+const translateAction = (value) => {
+  if (!value) return '-'
+  if (actionLabels[value]) return actionLabels[value]
+  for (const [key, label] of Object.entries(actionLabels)) {
+    if (value.startsWith(key)) return label
+  }
+  // 翻译 API 请求 action（如 "GET /api/search/..."）
+  for (const [pattern, moduleName] of apiActionPatterns) {
+    const match = value.match(pattern)
+    if (match) {
+      const method = httpMethodLabels[match[1]] || match[1]
+      return `${method}${moduleName}`
+    }
+  }
+  return value
+}
 
 const loading = ref(false)
 const logs = ref([])
