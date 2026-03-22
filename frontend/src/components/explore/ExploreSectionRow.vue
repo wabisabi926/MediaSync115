@@ -7,7 +7,7 @@
         <span class="group-sub">{{ formatExploreCount(remoteTotal) }} 部</span>
       </div>
       <div class="group-actions">
-        <el-button type="primary" link size="small" @click="handleOpenSection">
+        <el-button type="primary" link @click="handleOpenSection" style="font-size: 14px; padding: 8px 12px;">
           更多
         </el-button>
       </div>
