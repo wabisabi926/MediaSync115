@@ -1399,7 +1399,7 @@ const savingUpdateSettings = ref(false)
 const checkingUpdates = ref(false)
 
 const appInfo = ref({
-  currentVersion: '1.0.4',
+  currentVersion: '1.0.5',
   currentImageTag: '',
   currentGitSha: '',
   currentBuildTime: '',
