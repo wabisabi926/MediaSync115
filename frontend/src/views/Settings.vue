@@ -910,6 +910,21 @@
               </div>
             </el-form-item>
 
+            <el-divider content-position="left">资源画质偏好</el-divider>
+            <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+              设置后，订阅转存和首页探索转存会优先选择匹配的资源。勾选顺序即为优先级（从上到下）。不勾选则不做筛选。
+            </el-alert>
+            <el-form-item label="分辨率偏好">
+              <el-checkbox-group v-model="resourcePrefForm.resolutions">
+                <el-checkbox v-for="r in allResolutions" :key="r" :label="r" :value="r">{{ r }}</el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+            <el-form-item label="格式偏好">
+              <el-checkbox-group v-model="resourcePrefForm.formats">
+                <el-checkbox v-for="f in allFormats" :key="f" :label="f" :value="f">{{ f }}</el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+
             <el-divider content-position="left">HDHive 积分解锁策略</el-divider>
             <el-form-item label="优先免费资源">
               <el-switch v-model="schedulerForm.hdhiveUnlock.preferFree" />
@@ -941,21 +956,6 @@
               <el-text size="small" type="info" style="margin-left: 8px">
                 每次订阅任务最多自动扣除的积分总额
               </el-text>
-            </el-form-item>
-
-            <el-divider content-position="left">资源画质偏好</el-divider>
-            <el-alert type="info" :closable="false" style="margin-bottom: 12px">
-              设置后，订阅转存和首页探索转存会优先选择匹配的资源。勾选顺序即为优先级（从上到下）。不勾选则不做筛选。
-            </el-alert>
-            <el-form-item label="分辨率偏好">
-              <el-checkbox-group v-model="resourcePrefForm.resolutions">
-                <el-checkbox v-for="r in allResolutions" :key="r" :label="r" :value="r">{{ r }}</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-            <el-form-item label="格式偏好">
-              <el-checkbox-group v-model="resourcePrefForm.formats">
-                <el-checkbox v-for="f in allFormats" :key="f" :label="f" :value="f">{{ f }}</el-checkbox>
-              </el-checkbox-group>
             </el-form-item>
 
             <el-divider content-position="left">Nullbr 渠道</el-divider>
