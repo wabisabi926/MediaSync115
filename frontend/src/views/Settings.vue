@@ -943,6 +943,21 @@
               </el-text>
             </el-form-item>
 
+            <el-divider content-position="left">资源画质偏好</el-divider>
+            <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+              设置后，订阅转存和首页探索转存会优先选择匹配的资源。勾选顺序即为优先级（从上到下）。不勾选则不做筛选。
+            </el-alert>
+            <el-form-item label="分辨率偏好">
+              <el-checkbox-group v-model="resourcePrefForm.resolutions">
+                <el-checkbox v-for="r in allResolutions" :key="r" :label="r" :value="r">{{ r }}</el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+            <el-form-item label="格式偏好">
+              <el-checkbox-group v-model="resourcePrefForm.formats">
+                <el-checkbox v-for="f in allFormats" :key="f" :label="f" :value="f">{{ f }}</el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+
             <el-divider content-position="left">Nullbr 渠道</el-divider>
             <el-form-item label="启用任务">
               <el-switch v-model="schedulerForm.nullbr.enabled" />
@@ -1353,6 +1368,7 @@ import { resetAuthSessionCache } from '@/router'
 import { useRouter } from 'vue-router'
 import { formatBeijingDateTime, formatBeijingTableCell } from '@/utils/timezone'
 import { ALL_TABS, saveVisibleTabs } from '@/utils/detailTabs'
+import { ALL_RESOLUTIONS, ALL_FORMATS } from '@/utils/resourceTags'
 
 const router = useRouter()
 const activeSettingsTab = ref('pan115')
@@ -1453,6 +1469,12 @@ const schedulerForm = ref({
     thresholdInclusive: true,
     preferFree: true
   }
+})
+const allResolutions = ALL_RESOLUTIONS
+const allFormats = ALL_FORMATS
+const resourcePrefForm = reactive({
+  resolutions: [],
+  formats: [],
 })
 const sourceLabelMap = {
   nullbr: 'Nullbr',
@@ -3189,6 +3211,10 @@ const fetchRuntimeSettings = async () => {
     schedulerForm.value.hdhiveUnlock.thresholdInclusive = data.subscription_hdhive_unlock_threshold_inclusive !== false
     schedulerForm.value.hdhiveUnlock.preferFree = data.subscription_hdhive_prefer_free !== false
 
+    // Resource quality preferences
+    resourcePrefForm.resolutions = Array.isArray(data.resource_preferred_resolutions) ? data.resource_preferred_resolutions : []
+    resourcePrefForm.formats = Array.isArray(data.resource_preferred_formats) ? data.resource_preferred_formats : []
+
     const priority = Array.isArray(data.subscription_resource_priority)
       ? data.subscription_resource_priority.map(item => String(item || '').trim().toLowerCase())
       : []
@@ -3347,7 +3373,9 @@ const handleSaveScheduler = async () => {
       subscription_hdhive_unlock_max_points_per_item: Number(schedulerForm.value.hdhiveUnlock.maxPointsPerItem || 10),
       subscription_hdhive_unlock_budget_points_per_run: Number(schedulerForm.value.hdhiveUnlock.budgetPointsPerRun || 30),
       subscription_hdhive_unlock_threshold_inclusive: schedulerForm.value.hdhiveUnlock.thresholdInclusive !== false,
-      subscription_hdhive_prefer_free: schedulerForm.value.hdhiveUnlock.preferFree !== false
+      subscription_hdhive_prefer_free: schedulerForm.value.hdhiveUnlock.preferFree !== false,
+      resource_preferred_resolutions: resourcePrefForm.resolutions,
+      resource_preferred_formats: resourcePrefForm.formats
     })
     resourcePriority.value = normalizedPriority
     ElMessage.success('订阅任务、资源优先级与 HDHive 解锁策略已保存')

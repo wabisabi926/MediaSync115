@@ -202,11 +202,14 @@
                       <el-tag size="small" type="info">{{ row.source_service || 'hdhive' }}</el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="画质" width="120" align="center">
+                  <el-table-column label="画质" width="160" align="center">
                     <template #default="{ row }">
-                      <el-tag size="small" v-if="row.quality">
-                        {{ Array.isArray(row.quality) ? row.quality.join(', ') : row.quality }}
-                      </el-tag>
+                      <template v-if="row.quality && (Array.isArray(row.quality) ? row.quality.length : row.quality)">
+                        <el-tag size="small">{{ Array.isArray(row.quality) ? row.quality.join(', ') : row.quality }}</el-tag>
+                      </template>
+                      <template v-else-if="getRowTags(row).formats.length">
+                        <el-tag size="small" v-for="f in getRowTags(row).formats.slice(0, 3)" :key="f">{{ f }}</el-tag>
+                      </template>
                       <span v-else class="text-muted">-</span>
                     </template>
                   </el-table-column>
@@ -215,6 +218,7 @@
                       <el-tag size="small" type="info" v-if="row.resolution">
                         {{ Array.isArray(row.resolution) ? row.resolution.join(', ') : row.resolution }}
                       </el-tag>
+                      <el-tag size="small" type="info" v-else-if="getRowTags(row).resolution">{{ getRowTags(row).resolution }}</el-tag>
                       <span v-else class="text-muted">-</span>
                     </template>
                   </el-table-column>
@@ -409,8 +413,14 @@
                   <el-table-column label="大小" width="120" align="center">
                     <template #default="{ row }">{{ row.size || '-' }}</template>
                   </el-table-column>
-                  <el-table-column label="画质" width="120" align="center">
-                    <template #default="{ row }">{{ row.quality || '-' }}</template>
+                  <el-table-column label="画质" width="160" align="center">
+                    <template #default="{ row }">
+                      <template v-if="row.quality">{{ row.quality }}</template>
+                      <template v-else-if="getRowTags(row).formats.length">
+                        <el-tag size="small" v-for="f in getRowTags(row).formats.slice(0, 3)" :key="f">{{ f }}</el-tag>
+                      </template>
+                      <span v-else>-</span>
+                    </template>
                   </el-table-column>
                   <el-table-column label="操作" width="180" align="center" fixed="right">
                     <template #default="{ row }">
@@ -529,9 +539,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { pansouApi, pan115Api, searchApi, subscriptionApi } from '@/api'
 import { Check } from '@element-plus/icons-vue'
 import { getVisibleTabs, loadVisibleTabs, isTabVisible } from '@/utils/detailTabs'
+import { extractTags } from '@/utils/resourceTags'
 
 const _visibleTabs = getVisibleTabs()
 const tabVisible = (key) => isTabVisible(_visibleTabs.value, key)
+
+const _tagCache = new WeakMap()
+const getRowTags = (row) => {
+  if (_tagCache.has(row)) return _tagCache.get(row)
+  const tags = extractTags(row)
+  _tagCache.set(row, tags)
+  return tags
+}
 
 const route = useRoute()
 const loading = ref(false)

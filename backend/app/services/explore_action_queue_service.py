@@ -19,6 +19,7 @@ from app.services.pan115_service import pan115_service
 from app.services.pansou_service import pansou_service
 from app.services.runtime_settings_service import runtime_settings_service
 from app.services.tg_service import tg_service
+from app.utils.resource_tags import sort_by_preference
 
 
 _PAN115_SHARE_URL_PATTERN = re.compile(
@@ -80,6 +81,14 @@ class ExploreActionQueueService:
             return text_match.group(1).strip()
 
         return ""
+
+    @staticmethod
+    def _sort_by_pref(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        pref_res = runtime_settings_service.get_resource_preferred_resolutions()
+        pref_fmt = runtime_settings_service.get_resource_preferred_formats()
+        if pref_res or pref_fmt:
+            return sort_by_preference(rows, pref_res, pref_fmt)
+        return rows
 
     @staticmethod
     def _extract_share_link(row: Any) -> str:
@@ -810,6 +819,7 @@ class ExploreActionQueueService:
                     else:
                         nullbr_payload = await asyncio.to_thread(nullbr_service.get_movie_pan115, tmdb_id, 1)
                     nullbr_list = list(nullbr_payload.get("list") or []) if isinstance(nullbr_payload, dict) else []
+                    nullbr_list = self._sort_by_pref(nullbr_list)
                     for row in nullbr_list:
                         link = self._extract_share_link(row)
                         if link:
@@ -836,6 +846,7 @@ class ExploreActionQueueService:
                         rows = rows if isinstance(rows, list) else []
                         if runtime_settings_service.get_subscription_hdhive_prefer_free():
                             rows = hdhive_service.sort_free_first(rows)
+                        rows = self._sort_by_pref(rows)
                         for row in rows:
                             link = self._extract_share_link(row)
                             if link:
@@ -856,6 +867,7 @@ class ExploreActionQueueService:
                         rows = rows if isinstance(rows, list) else []
                         if runtime_settings_service.get_subscription_hdhive_prefer_free():
                             rows = hdhive_service.sort_free_first(rows)
+                        rows = self._sort_by_pref(rows)
                         for row in rows:
                             link = self._extract_share_link(row)
                             if link:

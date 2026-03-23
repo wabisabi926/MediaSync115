@@ -123,6 +123,8 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_budget_points_per_run": 30,
             "subscription_hdhive_unlock_threshold_inclusive": True,
             "subscription_hdhive_prefer_free": True,
+            "resource_preferred_resolutions": [],
+            "resource_preferred_formats": [],
             "update_source_type": "official",
             "update_repository": "wangsy1007/mediasync115",
             "tg_bot_token": "",
@@ -575,6 +577,14 @@ class RuntimeSettingsService:
     def get_subscription_hdhive_prefer_free(self) -> bool:
         return bool(self._data.get("subscription_hdhive_prefer_free", True))
 
+    def get_resource_preferred_resolutions(self) -> list[str]:
+        val = self._data.get("resource_preferred_resolutions")
+        return list(val) if isinstance(val, list) else []
+
+    def get_resource_preferred_formats(self) -> list[str]:
+        val = self._data.get("resource_preferred_formats")
+        return list(val) if isinstance(val, list) else []
+
     def get_update_source_type(self) -> str:
         value = str(self._data.get("update_source_type") or "official").strip().lower()
         if value == "custom_dockerhub":
@@ -637,7 +647,7 @@ class RuntimeSettingsService:
                         normalized[key] = int_list
                     continue
 
-                if key == "detail_visible_tabs":
+                if key in ("detail_visible_tabs", "resource_preferred_resolutions", "resource_preferred_formats"):
                     if isinstance(value, list):
                         normalized[key] = [str(v).strip() for v in value if str(v).strip()]
                     continue
@@ -800,6 +810,8 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_budget_points_per_run": self.get_subscription_hdhive_unlock_budget_points_per_run(),
             "subscription_hdhive_unlock_threshold_inclusive": self.get_subscription_hdhive_unlock_threshold_inclusive(),
             "subscription_hdhive_prefer_free": self.get_subscription_hdhive_prefer_free(),
+            "resource_preferred_resolutions": self.get_resource_preferred_resolutions(),
+            "resource_preferred_formats": self.get_resource_preferred_formats(),
             "update_source_type": self.get_update_source_type(),
             "update_repository": self.get_update_repository(),
             "tg_bot_token": str(self._data.get("tg_bot_token") or ""),

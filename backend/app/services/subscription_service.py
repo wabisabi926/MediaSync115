@@ -28,6 +28,7 @@ from app.services.pansou_service import pansou_service
 from app.services.runtime_settings_service import runtime_settings_service
 from app.services.tg_service import tg_service
 from app.services.tv_missing_service import tv_missing_service
+from app.utils.resource_tags import sort_by_preference
 from app.utils.name_parser import name_parser
 
 
@@ -824,6 +825,11 @@ class SubscriptionService:
                         hdhive_unlock_context or self._build_hdhive_unlock_context(),
                         traces,
                     )
+                # Sort by user's resolution/format preferences
+                pref_res = runtime_settings_service.get_resource_preferred_resolutions()
+                pref_fmt = runtime_settings_service.get_resource_preferred_formats()
+                if pref_res or pref_fmt:
+                    source_resources = sort_by_preference(source_resources, pref_res, pref_fmt)
                 return source_resources, traces
 
         traces.append(
