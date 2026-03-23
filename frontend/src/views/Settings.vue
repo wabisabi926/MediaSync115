@@ -10,8 +10,11 @@
           </template>
 
           <el-form :model="accountForm" label-width="120px">
-            <el-form-item label="当前账号">
-              <el-input v-model="accountForm.username" placeholder="请输入登录账号" />
+            <el-form-item label="当前用户名">
+              <el-input v-model="accountForm.currentUsername" readonly />
+            </el-form-item>
+            <el-form-item label="新用户名">
+              <el-input v-model="accountForm.newUsername" placeholder="留空表示不修改用户名" />
             </el-form-item>
             <el-form-item label="当前密码">
               <el-input
@@ -1220,7 +1223,8 @@ const router = useRouter()
 const activeSettingsTab = ref('pan115')
 const officialUpdateRepository = 'wangsy1007/mediasync115'
 const accountForm = ref({
-  username: 'admin',
+  currentUsername: 'admin',
+  newUsername: '',
   currentPassword: '',
   newPassword: '',
   confirmPassword: ''
@@ -2774,7 +2778,10 @@ const fetchAuthSession = async () => {
   try {
     const { data } = await authApi.getSession()
     if (data?.authenticated && data?.username) {
-      accountForm.value.username = data.username
+      accountForm.value.currentUsername = data.username
+      if (!String(accountForm.value.newUsername || '').trim()) {
+        accountForm.value.newUsername = data.username
+      }
     }
   } catch (error) {
     console.error('Failed to fetch auth session:', error)
@@ -2782,13 +2789,18 @@ const fetchAuthSession = async () => {
 }
 
 const handleSaveAccount = async () => {
-  const username = String(accountForm.value.username || '').trim()
+  const currentUsername = String(accountForm.value.currentUsername || '').trim()
+  const username = String(accountForm.value.newUsername || '').trim() || currentUsername
   const currentPassword = String(accountForm.value.currentPassword || '')
   const newPassword = String(accountForm.value.newPassword || '')
   const confirmPassword = String(accountForm.value.confirmPassword || '')
 
+  if (!currentUsername) {
+    ElMessage.warning('当前用户名不能为空')
+    return
+  }
   if (!username) {
-    ElMessage.warning('请输入账号')
+    ElMessage.warning('请输入新用户名')
     return
   }
   if (!currentPassword) {
@@ -2813,6 +2825,8 @@ const handleSaveAccount = async () => {
     })
     await authApi.logout().catch(() => {})
     resetAuthSessionCache()
+    accountForm.value.currentUsername = username
+    accountForm.value.newUsername = username
     accountForm.value.currentPassword = ''
     accountForm.value.newPassword = ''
     accountForm.value.confirmPassword = ''
@@ -2843,6 +2857,10 @@ const fetchAppInfo = async () => {
 const fetchRuntimeSettings = async () => {
   try {
     const { data } = await settingsApi.getRuntime()
+    accountForm.value.currentUsername = data.auth_username || 'admin'
+    if (!String(accountForm.value.newUsername || '').trim()) {
+      accountForm.value.newUsername = data.auth_username || 'admin'
+    }
     hdhiveForm.value.apiKey = data.hdhive_api_key || ''
     hdhiveForm.value.autoCheckinEnabled = !!data.hdhive_auto_checkin_enabled
     hdhiveForm.value.autoCheckinMode = data.hdhive_auto_checkin_mode || 'normal'
