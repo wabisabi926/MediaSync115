@@ -136,6 +136,7 @@ class SubscriptionRunTaskService:
                 trace_id=task_id,
                 extra={"channel": channel},
             )
+            await self._notify_result(channel, result)
         except Exception as exc:
             await self._update_task(
                 task_id,
@@ -155,6 +156,7 @@ class SubscriptionRunTaskService:
                 trace_id=task_id,
                 extra={"channel": channel, "error": str(exc)},
             )
+            await self._notify_error(channel, str(exc))
         finally:
             async with self._lock:
                 current = self._running_by_channel.get(channel)
@@ -242,6 +244,7 @@ class SubscriptionRunTaskService:
             trace_id=task_id,
             extra={"channel": "all", "results": results},
         )
+        await self._notify_all_channels_result(results, success_count, failed_count)
 
         async with self._lock:
             current = self._running_by_channel.get("all")
@@ -266,6 +269,54 @@ class SubscriptionRunTaskService:
         ]
         for task_id in removable[: len(self._tasks) - 200]:
             self._tasks.pop(task_id, None)
+
+    @staticmethod
+    async def _notify_result(channel: str, result: dict[str, Any]) -> None:
+        try:
+            from app.services.tg_bot.notifications import tg_bot_notify
+            from html import escape
+            checked = result.get("checked_count", 0)
+            new_res = result.get("new_resource_count", 0)
+            auto_saved = result.get("auto_saved_count", 0)
+            status = result.get("status", "unknown")
+            lines = [
+                f"<b>订阅检查完成</b> [{escape(channel)}]",
+                f"状态: {status}  检查: {checked}  新资源: {new_res}",
+            ]
+            if auto_saved:
+                lines.append(f"自动转存: {auto_saved}")
+            await tg_bot_notify("\n".join(lines))
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _notify_error(channel: str, error: str) -> None:
+        try:
+            from app.services.tg_bot.notifications import tg_bot_notify
+            from html import escape
+            await tg_bot_notify(
+                f"<b>订阅检查失败</b> [{escape(channel)}]\n{escape(error[:200])}"
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _notify_all_channels_result(
+        results: dict, success_count: int, failed_count: int,
+    ) -> None:
+        try:
+            from app.services.tg_bot.notifications import tg_bot_notify
+            from html import escape
+            lines = [f"<b>全渠道订阅检查完成</b>  成功: {success_count}  失败: {failed_count}"]
+            for ch, info in results.items():
+                status = info.get("status", "?")
+                checked = info.get("checked_count", "")
+                new_res = info.get("new_resource_count", "")
+                detail = f"  检查:{checked} 新资源:{new_res}" if checked != "" else ""
+                lines.append(f"  {escape(ch)}: {status}{detail}")
+            await tg_bot_notify("\n".join(lines))
+        except Exception:
+            pass
 
     @staticmethod
     def _normalize_channel(channel: str) -> str:

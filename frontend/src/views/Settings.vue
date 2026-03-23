@@ -1077,6 +1077,85 @@
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane label="TG Bot" name="tgbot">
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>Telegram Bot 配置</span>
+              <div class="status-tags">
+                <el-tag v-if="tgBotStatus.running" type="success" size="small">运行中</el-tag>
+                <el-tag v-else-if="tgBotStatus.checked" type="info" size="small">已停止</el-tag>
+              </div>
+            </div>
+          </template>
+
+          <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+            <template #title>
+              <span>使用 <el-link type="primary" href="https://t.me/BotFather" target="_blank">@BotFather</el-link> 创建机器人并获取 Token。</span>
+            </template>
+          </el-alert>
+
+          <el-form :model="tgBotForm" label-width="140px">
+            <el-form-item label="启用 Bot">
+              <el-switch v-model="tgBotForm.enabled" />
+            </el-form-item>
+            <el-form-item label="Bot Token">
+              <el-input v-model="tgBotForm.token" placeholder="输入 Bot Token" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="授权用户 ID">
+              <div>
+                <el-tag
+                  v-for="uid in tgBotForm.allowedUsers"
+                  :key="uid"
+                  closable
+                  style="margin-right: 8px; margin-bottom: 4px"
+                  @close="tgBotForm.allowedUsers = tgBotForm.allowedUsers.filter(u => u !== uid)"
+                >{{ uid }}</el-tag>
+                <el-input
+                  v-model="tgBotNewUserId"
+                  placeholder="输入用户 ID 后按回车（留空允许所有人）"
+                  style="width: 320px"
+                  @keyup.enter="addTgBotAllowedUser"
+                />
+              </div>
+            </el-form-item>
+            <el-form-item label="通知 Chat ID">
+              <div>
+                <el-tag
+                  v-for="cid in tgBotForm.notifyChatIds"
+                  :key="cid"
+                  closable
+                  style="margin-right: 8px; margin-bottom: 4px"
+                  @close="tgBotForm.notifyChatIds = tgBotForm.notifyChatIds.filter(c => c !== cid)"
+                >{{ cid }}</el-tag>
+                <el-input
+                  v-model="tgBotNewChatId"
+                  placeholder="输入 Chat ID 后按回车（在 Bot 中发送 /id 获取）"
+                  style="width: 320px"
+                  @keyup.enter="addTgBotNotifyChatId"
+                />
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingTgBot" @click="handleSaveTgBot">保存配置</el-button>
+              <el-button :loading="restartingTgBot" @click="handleRestartTgBot">重启 Bot</el-button>
+              <el-button @click="handleCheckTgBotStatus">检测状态</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-divider content-position="left">Bot 命令说明</el-divider>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="/s <关键词>">搜索影视</el-descriptions-item>
+            <el-descriptions-item label="/subs">查看订阅列表</el-descriptions-item>
+            <el-descriptions-item label="/run">触发订阅检查</el-descriptions-item>
+            <el-descriptions-item label="/status">系统状态</el-descriptions-item>
+            <el-descriptions-item label="/offline">离线下载任务</el-descriptions-item>
+            <el-descriptions-item label="/recent">最近下载记录</el-descriptions-item>
+            <el-descriptions-item label="/id">获取 Chat ID</el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+      </el-tab-pane>
+
       <el-tab-pane label="关于" name="about">
         <el-card class="settings-card">
           <template #header>
@@ -1356,6 +1435,19 @@ const serviceNameMap = {
 const savingProxy = ref(false)
 const testingProxy = ref(false)
 const savingAccount = ref(false)
+
+// TG Bot state
+const tgBotForm = ref({
+  enabled: false,
+  token: '',
+  allowedUsers: [],
+  notifyChatIds: [],
+})
+const tgBotNewUserId = ref('')
+const tgBotNewChatId = ref('')
+const tgBotStatus = ref({ checked: false, running: false })
+const savingTgBot = ref(false)
+const restartingTgBot = ref(false)
 
 const testing = ref(false)
 const testingRiskHealth = ref(false)
@@ -2854,6 +2946,69 @@ const fetchAppInfo = async () => {
   }
 }
 
+// ── TG Bot handlers ──
+const addTgBotAllowedUser = () => {
+  const val = String(tgBotNewUserId.value || '').trim()
+  if (!val) return
+  const uid = Number(val)
+  if (isNaN(uid)) { ElMessage.warning('请输入数字 ID'); return }
+  if (!tgBotForm.value.allowedUsers.includes(uid)) {
+    tgBotForm.value.allowedUsers.push(uid)
+  }
+  tgBotNewUserId.value = ''
+}
+const addTgBotNotifyChatId = () => {
+  const val = String(tgBotNewChatId.value || '').trim()
+  if (!val) return
+  const cid = Number(val)
+  if (isNaN(cid)) { ElMessage.warning('请输入数字 ID'); return }
+  if (!tgBotForm.value.notifyChatIds.includes(cid)) {
+    tgBotForm.value.notifyChatIds.push(cid)
+  }
+  tgBotNewChatId.value = ''
+}
+const handleSaveTgBot = async () => {
+  savingTgBot.value = true
+  try {
+    await settingsApi.updateRuntime({
+      tg_bot_enabled: tgBotForm.value.enabled,
+      tg_bot_token: tgBotForm.value.token,
+      tg_bot_allowed_users: tgBotForm.value.allowedUsers,
+      tg_bot_notify_chat_ids: tgBotForm.value.notifyChatIds,
+    })
+    ElMessage.success('TG Bot 配置已保存')
+    // Auto restart if enabled
+    if (tgBotForm.value.enabled && tgBotForm.value.token) {
+      await handleRestartTgBot()
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || 'TG Bot 配置保存失败')
+  } finally {
+    savingTgBot.value = false
+  }
+}
+const handleRestartTgBot = async () => {
+  restartingTgBot.value = true
+  try {
+    const { data } = await settingsApi.restartTgBot()
+    tgBotStatus.value = { checked: true, running: data.running }
+    ElMessage.success(data.running ? 'TG Bot 已启动' : 'TG Bot 未启动（请检查配置）')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || 'TG Bot 重启失败')
+  } finally {
+    restartingTgBot.value = false
+  }
+}
+const handleCheckTgBotStatus = async () => {
+  try {
+    const { data } = await settingsApi.getTgBotStatus()
+    tgBotStatus.value = { checked: true, running: data.running }
+    ElMessage.info(data.running ? 'TG Bot 运行中' : 'TG Bot 未运行')
+  } catch (error) {
+    ElMessage.error('检测失败')
+  }
+}
+
 const fetchRuntimeSettings = async () => {
   try {
     const { data } = await settingsApi.getRuntime()
@@ -2898,6 +3053,12 @@ const fetchRuntimeSettings = async () => {
     if (!pansouForm.value.baseUrl) {
       pansouForm.value.baseUrl = data.pansou_base_url || ''
     }
+
+    // TG Bot settings
+    tgBotForm.value.enabled = !!data.tg_bot_enabled
+    tgBotForm.value.token = data.tg_bot_token || ''
+    tgBotForm.value.allowedUsers = Array.isArray(data.tg_bot_allowed_users) ? data.tg_bot_allowed_users : []
+    tgBotForm.value.notifyChatIds = Array.isArray(data.tg_bot_notify_chat_ids) ? data.tg_bot_notify_chat_ids : []
 
     schedulerForm.value.nullbr.enabled = !!data.subscription_nullbr_enabled
     schedulerForm.value.nullbr.intervalHours = Number(data.subscription_nullbr_interval_hours || 24)

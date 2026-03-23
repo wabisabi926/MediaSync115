@@ -32,6 +32,7 @@ from app.services.runtime_settings_service import runtime_settings_service
 from app.services.emby_sync_scheduler_service import emby_sync_scheduler_service
 from app.services.hdhive_checkin_scheduler_service import hdhive_checkin_scheduler_service
 from app.services.subscription_scheduler_service import subscription_scheduler_service
+from app.services.tg_bot import tg_bot_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,9 @@ async def lifespan(app: FastAPI):
     await hdhive_checkin_scheduler_service.ensure_checkin_task()
     await emby_sync_scheduler_service.ensure_sync_task()
     await explore_home_warmup_service.warmup(force_refresh=False)
+    await tg_bot_service.start()
     yield
+    await tg_bot_service.stop()
     await scheduler_manager.stop()
     await pansou_service.close()
 

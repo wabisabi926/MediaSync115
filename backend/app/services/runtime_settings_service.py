@@ -124,6 +124,10 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_threshold_inclusive": True,
             "update_source_type": "official",
             "update_repository": "wangsy1007/mediasync115",
+            "tg_bot_token": "",
+            "tg_bot_enabled": False,
+            "tg_bot_allowed_users": [],
+            "tg_bot_notify_chat_ids": [],
         }
         self._data = dict(self._defaults)
         self._load()
@@ -707,6 +711,9 @@ class RuntimeSettingsService:
             api_key=self.get_emby_api_key(),
         )
 
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
     def get_all(self) -> dict[str, Any]:
         return {
             "http_proxy": str(self._data.get("http_proxy") or ""),
@@ -768,6 +775,10 @@ class RuntimeSettingsService:
             "subscription_hdhive_unlock_threshold_inclusive": self.get_subscription_hdhive_unlock_threshold_inclusive(),
             "update_source_type": self.get_update_source_type(),
             "update_repository": self.get_update_repository(),
+            "tg_bot_token": str(self._data.get("tg_bot_token") or ""),
+            "tg_bot_enabled": bool(self._data.get("tg_bot_enabled", False)),
+            "tg_bot_allowed_users": self._data.get("tg_bot_allowed_users") or [],
+            "tg_bot_notify_chat_ids": self._data.get("tg_bot_notify_chat_ids") or [],
         }
 
 

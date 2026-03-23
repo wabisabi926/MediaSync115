@@ -840,3 +840,28 @@ async def rebuild_tg_index():
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ── TG Bot ────────────────────────────────────────────────
+
+@router.get("/tg-bot/status")
+async def get_tg_bot_status():
+    from app.services.tg_bot import tg_bot_service
+    return tg_bot_service.status()
+
+
+@router.post("/tg-bot/restart")
+async def restart_tg_bot():
+    from app.services.tg_bot import tg_bot_service
+    try:
+        await tg_bot_service.restart()
+        return {"success": True, "running": tg_bot_service.running}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/tg-bot/stop")
+async def stop_tg_bot():
+    from app.services.tg_bot import tg_bot_service
+    await tg_bot_service.stop()
+    return {"success": True, "running": False}

@@ -189,7 +189,11 @@ export const settingsApi = {
   startTgIndexBackfill: (rebuild = false) => api.post('/settings/tg/index/backfill/start', { rebuild }),
   runTgIndexIncremental: () => api.post('/settings/tg/index/incremental/run'),
   getTgIndexJob: (jobId) => api.get(`/settings/tg/index/jobs/${encodeURIComponent(jobId)}`),
-  rebuildTgIndex: () => api.post('/settings/tg/index/rebuild')
+  rebuildTgIndex: () => api.post('/settings/tg/index/rebuild'),
+  // TG Bot
+  getTgBotStatus: () => api.get('/settings/tg-bot/status'),
+  restartTgBot: () => api.post('/settings/tg-bot/restart'),
+  stopTgBot: () => api.post('/settings/tg-bot/stop'),
 }
 
 export const logsApi = {
