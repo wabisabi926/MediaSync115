@@ -656,4 +656,10 @@ class HDHiveService:
         return await self._collect_tmdb_resources(tmdb_id, "tv")
 
 
+    @staticmethod
+    def sort_free_first(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sort resources so free ones (unlock_points=0) come first, preserving relative order."""
+        return sorted(items, key=lambda r: int(r.get("unlock_points") or 0) > 0)
+
+
 hdhive_service = HDHiveService()

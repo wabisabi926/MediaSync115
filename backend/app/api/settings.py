@@ -91,6 +91,7 @@ class RuntimeSettingsRequest(BaseModel):
     subscription_hdhive_unlock_max_points_per_item: Optional[int] = None
     subscription_hdhive_unlock_budget_points_per_run: Optional[int] = None
     subscription_hdhive_unlock_threshold_inclusive: Optional[bool] = None
+    subscription_hdhive_prefer_free: Optional[bool] = None
     update_source_type: Optional[str] = None
     update_repository: Optional[str] = None
     tg_bot_token: Optional[str] = None

@@ -972,6 +972,8 @@ class SubscriptionService:
                 else:
                     resources = await hdhive_service.get_movie_pan115(sub.tmdb_id)
                 resources = self._normalize_hdhive_subscription_items(resources)
+                if runtime_settings_service.get_subscription_hdhive_prefer_free():
+                    resources = hdhive_service.sort_free_first(resources)
                 traces.append(
                     {
                         "step": "fetch_hdhive_tmdb_done",
@@ -1014,6 +1016,8 @@ class SubscriptionService:
         media_type = "tv" if sub.media_type == MediaType.TV else "movie"
         keyword_resources = await hdhive_service.get_pan115_by_keyword(keyword, media_type=media_type)
         keyword_resources = self._normalize_hdhive_subscription_items(keyword_resources)
+        if runtime_settings_service.get_subscription_hdhive_prefer_free():
+            keyword_resources = hdhive_service.sort_free_first(keyword_resources)
         traces.append(
             {
                 "step": "fetch_hdhive_keyword_done",

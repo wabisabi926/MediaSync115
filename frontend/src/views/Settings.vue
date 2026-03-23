@@ -911,6 +911,12 @@
             </el-form-item>
 
             <el-divider content-position="left">HDHive 积分解锁策略</el-divider>
+            <el-form-item label="优先免费资源">
+              <el-switch v-model="schedulerForm.hdhiveUnlock.preferFree" />
+              <el-text size="small" type="info" style="margin-left: 8px">
+                转存时优先使用免费资源，避免消耗积分
+              </el-text>
+            </el-form-item>
             <el-form-item label="启用自动解锁">
               <el-switch v-model="schedulerForm.hdhiveUnlock.enabled" />
             </el-form-item>
@@ -1444,7 +1450,8 @@ const schedulerForm = ref({
     enabled: false,
     maxPointsPerItem: 10,
     budgetPointsPerRun: 30,
-    thresholdInclusive: true
+    thresholdInclusive: true,
+    preferFree: true
   }
 })
 const sourceLabelMap = {
@@ -3180,6 +3187,7 @@ const fetchRuntimeSettings = async () => {
     schedulerForm.value.hdhiveUnlock.maxPointsPerItem = Number(data.subscription_hdhive_unlock_max_points_per_item || 10)
     schedulerForm.value.hdhiveUnlock.budgetPointsPerRun = Number(data.subscription_hdhive_unlock_budget_points_per_run || 30)
     schedulerForm.value.hdhiveUnlock.thresholdInclusive = data.subscription_hdhive_unlock_threshold_inclusive !== false
+    schedulerForm.value.hdhiveUnlock.preferFree = data.subscription_hdhive_prefer_free !== false
 
     const priority = Array.isArray(data.subscription_resource_priority)
       ? data.subscription_resource_priority.map(item => String(item || '').trim().toLowerCase())
@@ -3338,7 +3346,8 @@ const handleSaveScheduler = async () => {
       subscription_hdhive_auto_unlock_enabled: schedulerForm.value.hdhiveUnlock.enabled,
       subscription_hdhive_unlock_max_points_per_item: Number(schedulerForm.value.hdhiveUnlock.maxPointsPerItem || 10),
       subscription_hdhive_unlock_budget_points_per_run: Number(schedulerForm.value.hdhiveUnlock.budgetPointsPerRun || 30),
-      subscription_hdhive_unlock_threshold_inclusive: schedulerForm.value.hdhiveUnlock.thresholdInclusive !== false
+      subscription_hdhive_unlock_threshold_inclusive: schedulerForm.value.hdhiveUnlock.thresholdInclusive !== false,
+      subscription_hdhive_prefer_free: schedulerForm.value.hdhiveUnlock.preferFree !== false
     })
     resourcePriority.value = normalizedPriority
     ElMessage.success('订阅任务、资源优先级与 HDHive 解锁策略已保存')

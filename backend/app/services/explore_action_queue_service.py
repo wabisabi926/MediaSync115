@@ -834,6 +834,8 @@ class ExploreActionQueueService:
                         else:
                             rows = await hdhive_service.get_movie_pan115(tmdb_id)
                         rows = rows if isinstance(rows, list) else []
+                        if runtime_settings_service.get_subscription_hdhive_prefer_free():
+                            rows = hdhive_service.sort_free_first(rows)
                         for row in rows:
                             link = self._extract_share_link(row)
                             if link:
@@ -852,6 +854,8 @@ class ExploreActionQueueService:
                     try:
                         rows = await hdhive_service.get_pan115_by_keyword(keyword, media_type=media_type)
                         rows = rows if isinstance(rows, list) else []
+                        if runtime_settings_service.get_subscription_hdhive_prefer_free():
+                            rows = hdhive_service.sort_free_first(rows)
                         for row in rows:
                             link = self._extract_share_link(row)
                             if link:
